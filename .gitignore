@@ -1,0 +1,19 @@
+node_modules/
+.DS_Store
+
+# === APIキーは絶対にコミットしない ===
+.env
+.env.*
+!.env.example
+.vercel
+
+# === 旧React試作・記録（ローカル保管。公開リポジトリには含めない）===
+src/
+styles/
+public/
+package.json
+package-lock.json
+vite.config.js
+tailwind.config.js
+なぜ?-
+失敗->なぜ?->その時の資料/

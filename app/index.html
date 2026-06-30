@@ -1,0 +1,2554 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#ff7fa8" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='27' font-size='27'%3E%F0%9F%8E%A4%3C/text%3E%3C/svg%3E" />
+<title>meegri ｜ ミーグリ練習シミュレーター</title>
+<!--
+  ============================================================
+  meegri / ミーグリ練習シミュレーター  Phase 1（動く核）
+  ------------------------------------------------------------
+  ・ビルド不要・npm不要・サーバー不要・外部ファイル不要の単一HTML。
+    → ダブルクリックで起動（file://）。または `python3 -m http.server`。
+  ・アイドル＝インラインSVGの表情差分（IP安全・透かし無し）。
+    本物の立ち絵を使いたい時は renderFace() を <img> に差し替えればOK。
+  ・効果音＝Web Audioで生成（外部mp3に依存しない）。
+  ・会話の頭脳＝ generateReply(userText, ctx)。
+    Phase 2 では、この中身を「Geminiを呼ぶ backend への fetch」に
+    差し替えるだけで“本物のAI会話”になる（UI・ゲームループは不変）。
+  ============================================================
+-->
+<style>
+  :root{
+    --pink:#ff7fa8; --pink-soft:#ffe3ec; --pink-deep:#e85d86;
+    --bg:#fff5f8; --ink:#3a2b33; --muted:#9b8a92;
+    --card:#ffffff; --line:#ffd8e4; --ok:#3bb273; --warn:#f0a500; --bad:#e7595b;
+    --shadow:0 10px 30px rgba(232,93,134,.15);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; height:100%;}
+  body{
+    font-family:"Hiragino Maru Gothic ProN","Hiragino Kaku Gothic ProN",system-ui,sans-serif;
+    color:var(--ink);
+    background:radial-gradient(1200px 600px at 50% -10%, #ffe9f1 0%, var(--bg) 60%);
+    display:flex; align-items:flex-start; justify-content:center; min-height:100%;
+  }
+  #app{
+    width:100%; max-width:430px; min-height:100vh; position:relative;
+    background:var(--bg); overflow:hidden;
+    box-shadow:0 0 60px rgba(232,93,134,.12);
+  }
+  .screen{display:none; flex-direction:column; min-height:100vh; min-height:100dvh; padding:22px 20px 28px;}
+  .screen.active{display:flex; animation:fade .35s ease;}
+  @keyframes fade{from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:none;}}
+
+  h1.logo{font-size:30px; letter-spacing:.06em; margin:8px 0 2px; text-align:center; color:var(--pink-deep);}
+  .logo small{display:block; font-size:12px; color:var(--muted); letter-spacing:.2em; margin-top:4px;}
+  .lead{text-align:center; font-size:13px; color:var(--muted); margin:0 0 18px; line-height:1.7;}
+
+  .label{font-size:13px; font-weight:700; color:var(--pink-deep); margin:18px 4px 8px; display:flex; align-items:center; gap:6px;}
+  .label::before{content:""; width:8px; height:8px; border-radius:50%; background:var(--pink); display:inline-block;}
+
+  .members{display:grid; grid-template-columns:repeat(3,1fr); gap:10px;}
+  .member{
+    background:var(--card); border:2px solid transparent; border-radius:18px; padding:12px 8px 10px;
+    text-align:center; cursor:pointer; box-shadow:var(--shadow); transition:.18s; position:relative;
+  }
+  .member:hover{transform:translateY(-2px);}
+  .member.sel{border-color:var(--pink); background:#fff;}
+  .member.sel::after{content:"✓"; position:absolute; top:6px; right:8px; color:var(--pink); font-weight:800;}
+  .member .av{width:64px; height:64px; margin:0 auto 6px;}
+  .member .nm{font-size:13px; font-weight:700;}
+  .member .cc{font-size:10px; color:var(--muted); margin-top:2px;}
+
+  .tickets{display:grid; grid-template-columns:repeat(3,1fr); gap:10px;}
+  .ticket{
+    background:var(--card); border:2px solid transparent; border-radius:16px; padding:14px 6px; text-align:center;
+    cursor:pointer; box-shadow:var(--shadow); transition:.18s;
+  }
+  .ticket.sel{border-color:var(--pink);}
+  .ticket b{font-size:20px; color:var(--pink-deep);}
+  .ticket span{display:block; font-size:11px; color:var(--muted); margin-top:3px;}
+
+  input[type=text]{
+    width:100%; border:2px solid var(--line); background:#fff; border-radius:14px;
+    padding:13px 14px; font-size:15px; font-family:inherit; color:var(--ink); outline:none;
+  }
+  input[type=text]:focus{border-color:var(--pink);}
+
+  .btn{
+    border:none; border-radius:16px; padding:15px; font-size:16px; font-weight:800; font-family:inherit;
+    background:linear-gradient(180deg,#ff90b3,var(--pink)); color:#fff; cursor:pointer; width:100%;
+    box-shadow:0 8px 18px rgba(232,93,134,.35); transition:.15s; letter-spacing:.04em;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn[disabled]{filter:grayscale(.6); opacity:.6; cursor:not-allowed;}
+  .btn.ghost{background:#fff; color:var(--pink-deep); border:2px solid var(--line); box-shadow:none;}
+  .spacer{flex:1;}
+  .note{font-size:11px; color:var(--muted); text-align:center; line-height:1.7; margin-top:14px;}
+
+  /* ---- queue ---- */
+  .q-wrap{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:10px;}
+  .q-av{width:120px; height:120px;}
+  .q-status{font-size:15px; color:var(--muted); min-height:22px;}
+  .q-big{font-size:46px; font-weight:800; color:var(--pink-deep);}
+  .q-sub{font-size:13px; color:var(--muted);}
+  .countdown{font-size:120px; font-weight:900; color:var(--pink); line-height:1; animation:pop .9s ease;}
+  @keyframes pop{0%{transform:scale(.3); opacity:0;}40%{transform:scale(1.1); opacity:1;}100%{transform:scale(1); opacity:.2;}}
+  .bars{display:flex; gap:4px; align-items:flex-end; height:18px;}
+  .bars i{width:5px; background:var(--pink); border-radius:2px; animation:wave 1s infinite ease-in-out;}
+  .bars i:nth-child(1){height:30%; animation-delay:0s;}
+  .bars i:nth-child(2){height:55%; animation-delay:.15s;}
+  .bars i:nth-child(3){height:80%; animation-delay:.3s;}
+  .bars i:nth-child(4){height:100%; animation-delay:.45s;}
+  @keyframes wave{0%,100%{opacity:.35;}50%{opacity:1;}}
+
+  /* ---- talk ---- */
+  #screen-talk{padding:0;}
+  .callbar{
+    background:#1d1320; color:#fff; padding:10px 14px; display:flex; align-items:center; gap:10px;
+  }
+  .callbar .who{font-weight:700; font-size:14px; flex:1;}
+  .callbar .rec{font-size:10px; color:#ff9db7; border:1px solid #ff9db7; border-radius:20px; padding:2px 8px;}
+  .callbar .sig{display:flex; gap:3px; align-items:flex-end; height:14px;}
+  .callbar .sig i{width:4px; background:#7CFC9A; border-radius:1px;}
+  .timerbar{height:6px; background:#3a2b33; position:relative;}
+  .timerbar > div{height:100%; width:100%; background:linear-gradient(90deg,#7CFC9A,#ffe06b); transition:width .25s linear;}
+  .timerbar.warn > div{background:linear-gradient(90deg,#ffb347,#e7595b);}
+  .stage{
+    background:linear-gradient(180deg,#2a1c25,#43303b); color:#fff; text-align:center;
+    padding:14px 10px 10px; position:relative;
+  }
+  .stage .av{width:140px; height:140px; margin:0 auto; filter:drop-shadow(0 6px 14px rgba(0,0,0,.3));}
+  .stage .nick{font-size:12px; color:#ffd1e0; margin-top:2px; min-height:16px;}
+  .moodwrap{display:flex; align-items:center; gap:6px; justify-content:center; margin-top:5px; font-size:10px; color:#ffd1e0;}
+  .moodbar{width:120px; height:6px; background:rgba(255,255,255,.18); border-radius:3px; overflow:hidden;}
+  .moodbar > div{height:100%; width:70%; background:#7CFC9A; transition:width .35s ease, background .35s;}
+  .lag{position:absolute; top:10px; left:12px; font-size:10px; color:#ffd76b; opacity:0; transition:.2s;}
+  .lag.show{opacity:1;}
+  .timeleft{position:absolute; top:10px; right:12px; font-size:13px; font-weight:800; color:#fff;}
+  .chat{flex:1; overflow-y:auto; padding:14px; background:var(--bg); display:flex; flex-direction:column; gap:9px;}
+  .msg{max-width:80%; padding:9px 13px; border-radius:16px; font-size:14px; line-height:1.6; animation:fade .25s ease; word-break:break-word;}
+  .msg.idol{align-self:flex-start; background:#fff; border:1px solid var(--line); border-bottom-left-radius:5px;}
+  .msg.me{align-self:flex-end; background:linear-gradient(180deg,#ff90b3,var(--pink)); color:#fff; border-bottom-right-radius:5px;}
+  .msg.sys{align-self:center; background:transparent; color:var(--muted); font-size:11px;}
+  .typing{align-self:flex-start; background:#fff; border:1px solid var(--line); border-radius:16px; padding:11px 15px;}
+  .typing span{display:inline-block; width:7px; height:7px; margin:0 1px; background:var(--pink); border-radius:50%; animation:blink 1.2s infinite;}
+  .typing span:nth-child(2){animation-delay:.2s;} .typing span:nth-child(3){animation-delay:.4s;}
+  @keyframes blink{0%,60%,100%{opacity:.25; transform:translateY(0);}30%{opacity:1; transform:translateY(-3px);}}
+
+  .chips{display:flex; gap:7px; overflow-x:auto; padding:9px 12px 0; background:var(--bg);}
+  .chip{white-space:nowrap; border:1.5px solid var(--line); background:#fff; color:var(--pink-deep);
+    border-radius:20px; padding:7px 12px; font-size:12px; font-weight:700; cursor:pointer; flex:0 0 auto;}
+  .chip:active{background:var(--pink-soft);}
+  .inputrow{display:flex; gap:8px; padding:10px 12px calc(14px + env(safe-area-inset-bottom)); background:var(--bg); align-items:center;}
+  .inputrow input{flex:1;}
+  .sendbtn{border:none; background:var(--pink); color:#fff; font-weight:800; border-radius:14px; padding:0 18px; height:46px; cursor:pointer; font-size:14px;}
+  .mute{border:none; background:#fff; border:2px solid var(--line); border-radius:12px; width:46px; height:46px; cursor:pointer; font-size:18px;}
+
+  /* ---- result ---- */
+  .scorecard{background:var(--card); border-radius:22px; padding:22px; box-shadow:var(--shadow); text-align:center; margin-top:6px;}
+  .rank{font-size:64px; font-weight:900; line-height:1; margin:4px 0;}
+  .rank.S{color:#ffb300;} .rank.A{color:var(--pink-deep);} .rank.B{color:#4aa3df;} .rank.C{color:#8a8a8a;} .rank.D{color:#b0653f;}
+  .total{font-size:15px; color:var(--muted);} .total b{font-size:30px; color:var(--ink);}
+  .idolfb{background:var(--pink-soft); border-radius:14px; padding:12px 14px; font-size:13px; line-height:1.7; margin:14px 0 4px; text-align:left;}
+  .items{display:flex; flex-direction:column; gap:8px; margin-top:14px;}
+  .item{display:flex; gap:10px; align-items:flex-start; background:#fff; border:1px solid var(--line); border-radius:13px; padding:10px 12px; text-align:left;}
+  .item .mk{font-size:18px; line-height:1.4;}
+  .item .tx b{font-size:13px;} .item .tx p{margin:2px 0 0; font-size:11.5px; color:var(--muted); line-height:1.6;}
+  .ok{color:var(--ok);} .warn{color:var(--warn);} .bad{color:var(--bad);}
+  .actions{display:flex; gap:10px; margin-top:18px;}
+
+  /* ---- liveness & polish ---- */
+  .stage .av{animation:float 3.6s ease-in-out infinite;}
+  @keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-5px);}}
+  .timeleft.urgent{animation:beat .55s ease-in-out infinite; color:#ff5b7a;}
+  @keyframes beat{0%,100%{transform:scale(1);}50%{transform:scale(1.2);}}
+  .moodwrap .moodface{font-size:13px; min-width:16px; text-align:center;}
+  /* difficulty selector */
+  .diffs{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+  .diff{flex:1; background:var(--card); border:2px solid transparent; border-radius:14px; padding:9px 4px; text-align:center; cursor:pointer; box-shadow:var(--shadow); font-size:12px; font-weight:700; color:var(--ink); transition:.15s;}
+  .diff small{display:block; font-size:9px; color:var(--muted); margin-top:2px; font-weight:400;}
+  .diff.sel{border-color:var(--pink); color:var(--pink-deep);}
+  .diff:active{transform:translateY(1px);}
+  /* best record */
+  .member .best{position:absolute; top:6px; left:8px; font-size:9px; font-weight:800; color:#ffa000;}
+  .newbest{display:inline-block; margin-top:10px; background:#fff3c4; color:#b8860b; font-size:13px; font-weight:800; padding:7px 14px; border-radius:20px; animation:pop2 .55s ease;}
+  .bestline{font-size:11px; color:var(--muted); margin-top:8px;}
+  @keyframes pop2{0%{transform:scale(.5); opacity:0;}60%{transform:scale(1.12);}100%{transform:scale(1); opacity:1;}}
+  /* talk hint */
+  .hint{position:absolute; left:0; right:0; bottom:74px; text-align:center; font-size:11px; color:var(--pink-deep); pointer-events:none; animation:hintb 1.5s ease-in-out infinite; z-index:5;}
+  @keyframes hintb{0%,100%{transform:translateY(0); opacity:.65;}50%{transform:translateY(-4px); opacity:1;}}
+  .howto{font-size:11px; color:var(--muted); text-align:center; margin:2px 4px 0; line-height:1.7;}
+  .sendbtn:disabled{filter:grayscale(.5); opacity:.5; cursor:not-allowed;}
+
+  /* ---- events / hype / endings / dex / modal ---- */
+  .evbanner{position:absolute; top:8px; left:50%; transform:translateX(-50%); background:rgba(255,255,255,.18); color:#fff; font-size:11px; font-weight:700; padding:3px 12px; border-radius:20px; z-index:4;}
+  .hypewrap{display:flex; align-items:center; gap:6px; justify-content:center; margin-top:5px; font-size:11px; color:#ffd1e0;}
+  .hypebar{width:120px; height:6px; background:rgba(255,255,255,.18); border-radius:3px; overflow:hidden;}
+  .hypebar > div{height:100%; width:0%; background:linear-gradient(90deg,#ffb347,#ff5b7a); transition:width .3s;}
+  .hypewrap .combo{font-weight:800; color:#ffd76b; min-width:56px; text-align:left;}
+  .heart{position:absolute; bottom:24px; font-size:20px; pointer-events:none; animation:rise 1.6s ease-out forwards; z-index:6;}
+  @keyframes rise{0%{transform:translateY(0) scale(.6); opacity:0;}15%{opacity:1;}100%{transform:translateY(-150px) scale(1.2); opacity:0;}}
+  .endingcard{background:linear-gradient(180deg,#fff,#fff6fa); border:2px dashed var(--line); border-radius:16px; padding:14px; margin-bottom:14px;}
+  .endingcard .endico{font-size:42px; line-height:1;}
+  .endingcard .endname{font-size:17px; font-weight:800; color:var(--pink-deep); margin-top:4px;}
+  .endingcard .enddesc{font-size:12px; color:var(--muted); line-height:1.7; margin-top:6px;}
+  .endingcard .endmeta{font-size:11px; color:var(--pink); margin-top:8px; font-weight:700;}
+  .newtag{background:#ff5b7a; color:#fff; font-size:10px; padding:2px 7px; border-radius:10px; vertical-align:middle; animation:pop2 .5s ease;}
+  .dexgrid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .dexcard{background:var(--card); border:2px solid var(--line); border-radius:14px; padding:12px 10px; text-align:center; box-shadow:var(--shadow);}
+  .dexcard.locked{background:#f6eef1; border-style:dashed; opacity:.9;}
+  .dexcard.special{border-color:#ffc07a;}
+  .dexcard.secret{border-color:#c79bff;}
+  .dexcard .dexico{font-size:30px; line-height:1.2;}
+  .dexcard .dexname{font-size:13px; font-weight:800; margin-top:4px;}
+  .dexcard .dexdesc{font-size:10.5px; color:var(--muted); line-height:1.6; margin-top:5px;}
+  .dexcard .dexmeta{font-size:9px; color:var(--pink-deep); margin-top:6px; font-weight:700;}
+  .modal{position:fixed; inset:0; background:rgba(40,20,30,.45); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;}
+  .modalbox{background:#fff; border-radius:22px; padding:22px; width:100%; max-width:360px; max-height:88vh; max-height:88dvh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.3); animation:pop2 .3s ease;}
+  .modalh{font-size:18px; margin:0 0 4px; color:var(--pink-deep); text-align:center;}
+  .toast{position:fixed; left:50%; bottom:40px; transform:translateX(-50%); background:#3a2b33; color:#fff; font-size:13px; padding:11px 18px; border-radius:24px; z-index:200; box-shadow:0 8px 24px rgba(0,0,0,.3); animation:pop2 .3s ease;}
+
+  /* ============ DESIGN ENHANCEMENT ============ */
+  :root{ --mc:#ff7fa8; }
+  body{ background:linear-gradient(160deg,#fff0f6 0%, #ffe9f3 38%, #f1ecff 100%); }
+  #app{ background:linear-gradient(180deg,#fffafc 0%, #fff5f8 100%); }
+  #app::before,#app::after{ content:""; position:absolute; border-radius:50%; filter:blur(40px); opacity:.55; pointer-events:none; z-index:0; }
+  #app::before{ width:240px; height:240px; background:radial-gradient(circle,#ffc3da,transparent 70%); top:-70px; right:-70px; }
+  #app::after{ width:280px; height:280px; background:radial-gradient(circle,#d9c8ff,transparent 70%); bottom:60px; left:-90px; }
+  .screen{ position:relative; z-index:1; }
+
+  h1.logo{ background:linear-gradient(92deg,#ff5b8e,#b86bff); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; filter:drop-shadow(0 2px 7px rgba(232,93,134,.22)); }
+  h1.logo small{ -webkit-text-fill-color:initial; color:var(--muted); }
+  .label{ font-size:12px; letter-spacing:.04em; }
+
+  .member{ background:linear-gradient(180deg,#ffffff, color-mix(in srgb, var(--mc) 14%, #fff)); border-radius:20px; }
+  .member .av{ background:radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--mc) 26%, #fff), transparent 64%); }
+  .member.sel{ border-color:var(--mc); box-shadow:0 12px 26px color-mix(in srgb, var(--mc) 38%, transparent); transform:translateY(-3px); }
+  .member.sel::after{ content:"✓"; background:var(--mc); color:#fff; width:18px; height:18px; border-radius:50%; line-height:18px; text-align:center; top:8px; right:8px; font-size:11px; }
+  .ticket.sel,.diff.sel{ background:linear-gradient(180deg,#fff,#fff2f7); }
+
+  .btn{ background:linear-gradient(180deg,#ff93b6,#ff5e8e); box-shadow:0 10px 22px rgba(255,94,142,.42), inset 0 1px 0 rgba(255,255,255,.55); letter-spacing:.06em; }
+  .btn:active{ transform:translateY(2px); box-shadow:0 4px 12px rgba(255,94,142,.4); }
+  .btn.ghost{ background:rgba(255,255,255,.86); }
+
+  .callbar{ background:linear-gradient(180deg,#241526,#190f1c); }
+  .stage{ background:radial-gradient(125% 85% at 50% 0%, color-mix(in srgb, var(--mc) 30%, #2a1c25), #211520 72%); }
+  .stage::after{ content:""; position:absolute; top:14px; left:50%; transform:translateX(-50%); width:160px; height:160px; border-radius:50%; background:radial-gradient(circle, color-mix(in srgb, var(--mc) 55%, transparent), transparent 66%); filter:blur(7px); pointer-events:none; z-index:0; }
+  .stage .av{ filter:drop-shadow(0 8px 18px color-mix(in srgb, var(--mc) 55%, rgba(0,0,0,.4))); }
+  .stage .av,.stage .nick,.stage .moodwrap,.stage .hypewrap,.stage .evbanner,.stage .timeleft,.stage .lag{ position:relative; z-index:1; }
+
+  .msg{ box-shadow:0 3px 10px rgba(180,120,140,.12); }
+  .msg.idol{ box-shadow:0 4px 14px rgba(180,120,140,.16); }
+  .msg.me{ background:linear-gradient(180deg,#ff93b6,#ff5e8e); box-shadow:0 6px 16px rgba(255,94,142,.3); }
+  .chip{ box-shadow:0 3px 8px rgba(232,93,134,.1); }
+  .inputrow{ box-shadow:0 -6px 18px rgba(232,93,134,.08); }
+
+  .scorecard{ background:linear-gradient(180deg,#ffffff,#fff4f9); border:1px solid #ffe1ec; }
+  .rank{ animation:rankpop .7s cubic-bezier(.2,1.3,.4,1) both; }
+  .rank.S{ text-shadow:0 0 18px rgba(255,179,0,.6); }
+  .rank.A{ text-shadow:0 0 16px rgba(232,93,134,.4); }
+  @keyframes rankpop{ 0%{transform:scale(.2) rotate(-12deg); opacity:0;} 60%{transform:scale(1.16);} 100%{transform:scale(1); opacity:1;} }
+  .endingcard{ border:2px dashed color-mix(in srgb, var(--pink) 42%, #fff); background:linear-gradient(180deg,#fff,#fff4fb); }
+
+  .dexcard.special{ background:linear-gradient(180deg,#fff8ef,#fff); }
+  .dexcard.secret{ background:linear-gradient(180deg,#f7f0ff,#fff); }
+  .dexcard:not(.locked).secret{ box-shadow:0 6px 18px rgba(170,120,255,.25); }
+
+  .confetti{ position:fixed; top:-14px; width:9px; height:14px; z-index:150; pointer-events:none; animation:fall linear forwards; }
+  @keyframes fall{ to{ transform:translateY(110vh) rotate(560deg); } }
+
+  /* ---- micro-interactions & transitions ---- */
+  .screen.active{ animation:screenIn .44s cubic-bezier(.2,.8,.2,1); }
+  @keyframes screenIn{ from{opacity:0; transform:translateY(18px) scale(.995);} to{opacity:1; transform:none;} }
+  #app{ animation:appin .6s ease; }
+  @keyframes appin{ from{opacity:0;} to{opacity:1;} }
+  .btn,.ticket,.diff,.chip,.sendbtn,.mute{ position:relative; overflow:hidden; }
+  .ripple{ position:absolute; border-radius:50%; background:rgba(255,120,160,.35); transform:scale(0); animation:rippleAnim .6s ease-out; pointer-events:none; }
+  @keyframes rippleAnim{ to{ transform:scale(2.6); opacity:0; } }
+  .member{ animation:cardin .5s both; }
+  .member:active{ transform:scale(.97); }
+  @keyframes cardin{ from{opacity:0; transform:translateY(16px) scale(.92);} to{opacity:1;} }
+  .dexgrid{ perspective:900px; }
+  .dexcard{ animation:flipin .5s both; }
+  @keyframes flipin{ from{opacity:0; transform:rotateY(75deg);} to{opacity:1; transform:rotateY(0);} }
+  .scorecard{ perspective:1000px; }
+  .endingcard{ animation:endingflip .75s cubic-bezier(.2,.9,.3,1) both; transform-origin:top; }
+  @keyframes endingflip{ from{opacity:0; transform:rotateX(-88deg);} to{opacity:1; transform:rotateX(0);} }
+  .spinner{ width:30px; height:30px; border-radius:50%; border:4px solid rgba(255,127,168,.25); border-top-color:var(--pink); animation:spin .8s linear infinite; margin:4px auto; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  /* ============ TOP-TIER UI POLISH ============ */
+  .topicons{ position:absolute; top:14px; right:16px; display:flex; gap:8px; z-index:4; }
+  .iconbtn{ width:40px; height:40px; border-radius:50%; border:none; background:rgba(255,255,255,.82); box-shadow:0 4px 12px rgba(232,93,134,.2); font-size:18px; cursor:pointer; transition:.15s; backdrop-filter:blur(4px); }
+  .iconbtn:active{ transform:scale(.9); }
+  button:focus-visible, input:focus-visible, .member:focus-visible{ outline:3px solid rgba(255,127,168,.55); outline-offset:2px; }
+  /* splash */
+  #splash{ position:fixed; inset:0; z-index:300; display:flex; align-items:center; justify-content:center; background:linear-gradient(160deg,#ffd9e8,#e9d8ff); animation:splashout 1.5s .35s forwards; }
+  #splash .sl{ text-align:center; font-size:46px; font-weight:800; letter-spacing:.06em; background:linear-gradient(92deg,#ff5b8e,#b86bff); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; animation:splashpop .85s ease; }
+  #splash .sl small{ display:block; -webkit-text-fill-color:initial; color:#bb6a93; font-size:12px; letter-spacing:.22em; margin-top:8px; }
+  @keyframes splashpop{ 0%{transform:scale(.6); opacity:0;} 60%{transform:scale(1.08);} 100%{transform:scale(1); opacity:1;} }
+  @keyframes splashout{ 0%,72%{opacity:1; visibility:visible;} 100%{opacity:0; visibility:hidden;} }
+  /* result count-up & item reveal */
+  .items .item{ animation:itemin .45s both; }
+  .items .item:nth-child(1){animation-delay:.04s} .items .item:nth-child(2){animation-delay:.1s} .items .item:nth-child(3){animation-delay:.16s} .items .item:nth-child(4){animation-delay:.22s} .items .item:nth-child(5){animation-delay:.28s} .items .item:nth-child(6){animation-delay:.34s}
+  @keyframes itemin{ from{opacity:0; transform:translateX(-12px);} to{opacity:1; transform:none;} }
+  /* talk live feedback */
+  .floatfx{ position:absolute; top:40%; font-weight:800; font-size:18px; z-index:6; pointer-events:none; animation:floatup 1.1s ease-out forwards; text-shadow:0 1px 4px rgba(0,0,0,.35); }
+  .floatfx.pos{ color:#9bf6c0; } .floatfx.neg{ color:#ff97a8; }
+  @keyframes floatup{ 0%{opacity:0; transform:translateY(8px) scale(.7);} 22%{opacity:1; transform:translateY(0) scale(1.12);} 100%{opacity:0; transform:translateY(-48px) scale(1);} }
+  .stageflash{ position:absolute; inset:0; background:radial-gradient(circle at 50% 45%, transparent 38%, rgba(231,89,91,.45)); animation:flashout .55s ease-out forwards; pointer-events:none; z-index:2; }
+  @keyframes flashout{ from{opacity:1;} to{opacity:0;} }
+  .av.bump{ animation:bump .45s ease; }
+  @keyframes bump{ 0%,100%{transform:translateY(0) scale(1);} 35%{transform:translateY(-7px) scale(1.09);} }
+  /* tutorial */
+  .tutico{ font-size:48px; text-align:center; line-height:1.05; animation:pop2 .4s ease; }
+  .tutbody{ font-size:13px; color:var(--ink); line-height:1.85; text-align:center; margin:6px 6px 12px; min-height:82px; }
+  .tutdots{ display:flex; gap:7px; justify-content:center; margin:2px 0 6px; }
+  .tutdot{ width:8px; height:8px; border-radius:50%; background:var(--line); transition:.2s; }
+  .tutdot.on{ background:var(--pink); transform:scale(1.2); }
+
+  /* ---- WebGL living background + frosted glass app ---- */
+  #bgfx{ position:fixed; inset:0; width:100%; height:100%; z-index:-2; display:block; }
+  #app{ background:rgba(255,255,255,0.60); backdrop-filter:blur(13px) saturate(1.15); -webkit-backdrop-filter:blur(13px) saturate(1.15); }
+  #app::before,#app::after{ opacity:.32; }
+
+  /* ---- camera self-view (WebGL beautify) ---- */
+  .campip{ position:absolute; right:10px; bottom:10px; width:84px; height:108px; border-radius:12px; overflow:hidden; border:2px solid rgba(255,255,255,.55); box-shadow:0 4px 14px rgba(0,0,0,.45); z-index:3; background:#1a0f1d; animation:pop2 .3s ease; }
+  .campip canvas{ width:100%; height:100%; display:block; }
+  .campip .camlabel{ position:absolute; left:5px; bottom:3px; font-size:9px; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.7); }
+  .mute.on{ background:var(--pink); color:#fff; border-color:var(--pink); }
+  .aiv{ background:linear-gradient(180deg,#f5f1ff,#fff); border:1px solid #e3d8ff; border-radius:14px; padding:12px 14px; margin:10px 0 2px; text-align:left; animation:itemin .4s both; }
+  .aiv b{ font-size:13px; color:#7a5bd8; } .aiv p{ font-size:12px; color:var(--ink); margin:5px 0 0; line-height:1.7; }
+  .ailoading{ font-size:12px; color:var(--muted); margin:10px 0; }
+
+  /* ============ TALK: 2カラム化（PC＝推しの顔が常時見える）＋ 操作ボタン刷新 ============ */
+  /* 共通（スマホ縦＝従来どおりの縦積み） */
+  .talkmain{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  .talkside{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; }
+  .stage{ flex:0 0 auto; }
+  .chat{ min-height:0; }
+
+  /* 操作ボタン（🎙️話す / 🔊声 / 📷カメラ）を色＋ラベルで明確に区別 */
+  .ctrlrow{ display:flex; gap:8px; padding:8px 12px 0; background:var(--bg); }
+  .ctrlbtn{ flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; border:2px solid var(--line);
+    background:#fff; border-radius:14px; padding:8px 4px 6px; cursor:pointer; font-family:inherit; transition:.15s;
+    position:relative; overflow:hidden; }
+  .ctrlbtn .ci{ font-size:19px; line-height:1; }
+  .ctrlbtn .cl{ font-size:10.5px; font-weight:800; letter-spacing:.02em; }
+  .ctrlbtn:active{ transform:translateY(1px); }
+  .ctrlbtn.cmic{ border-color:#ffb3c8; color:#e85d86; }
+  .ctrlbtn.cmic .ci::after{ }
+  .ctrlbtn.cmic.on{ background:linear-gradient(180deg,#ff6b8a,#ff4f74); border-color:#ff4f74; color:#fff; animation:recpulse 1s infinite; }
+  @keyframes recpulse{ 0%,100%{ box-shadow:0 3px 12px rgba(255,79,116,.5); } 50%{ box-shadow:0 3px 22px rgba(255,79,116,.9); } }
+  .ctrlbtn.cvoice{ border-color:#c7b6ff; color:#7a5bd8; background:linear-gradient(180deg,#fbf9ff,#fff); }
+  .ctrlbtn.cvoice.on{ background:#efe9ff; border-color:#a98fff; color:#5e42b8; }
+  .ctrlbtn.ccam{ border-color:#8fe0d3; color:#1f9d8c; background:linear-gradient(180deg,#f6fffd,#fff); }
+  .ctrlbtn.ccam.on{ background:linear-gradient(180deg,#3fd0bd,#1fb9a6); border-color:#1fb9a6; color:#fff; box-shadow:0 3px 14px rgba(34,185,166,.5); }
+
+  /* ホーム：カメラON/OFF 確認トグル */
+  .camtoggle{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    border:2px solid var(--line); background:#fff; border-radius:16px; padding:13px 16px; cursor:pointer;
+    font-family:inherit; font-size:14px; font-weight:700; color:var(--ink); box-shadow:var(--shadow); transition:.15s;
+    position:relative; overflow:hidden; }
+  .camtoggle .ctxt{ display:flex; align-items:center; gap:8px; }
+  .camtoggle .cstate{ font-size:12px; font-weight:800; color:var(--muted); background:#f1e9ee; border-radius:20px; padding:5px 14px; transition:.15s; }
+  .camtoggle.on{ border-color:#1fb9a6; background:linear-gradient(180deg,#f4fffd,#fff); }
+  .camtoggle.on .cstate{ background:linear-gradient(180deg,#3fd0bd,#1fb9a6); color:#fff; }
+  /* iOS風スイッチ（ON/OFFトグルを統一） */
+  .camtoggle .swt{ width:50px; height:30px; border-radius:999px; background:#e2d5dc; position:relative; transition:.2s; flex:0 0 auto; }
+  .camtoggle.on .swt{ background:#1fb9a6; }
+  .camtoggle .swt .knob{ position:absolute; top:3px; left:3px; width:24px; height:24px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.28); transition:.2s; }
+  .camtoggle.on .swt .knob{ transform:translateX(20px); }
+  .camnote{ font-size:10.5px; color:var(--muted); line-height:1.65; margin:7px 4px 0; }
+
+  /* 枚数ステッパー（自分で選べる） */
+  .stepper{ display:flex; align-items:center; gap:12px; background:var(--card); border-radius:16px; padding:9px 14px; box-shadow:var(--shadow); }
+  .stepbtn{ width:44px; height:44px; border-radius:50%; border:2px solid var(--line); background:#fff; color:var(--pink-deep); font-size:24px; font-weight:800; cursor:pointer; line-height:1; transition:.15s; flex:0 0 auto; }
+  .stepbtn:active{ transform:scale(.92); background:var(--pink-soft); }
+  .stepbtn:disabled{ opacity:.35; cursor:not-allowed; }
+  .stepval{ flex:1; text-align:center; }
+  .stepval b{ font-size:26px; color:var(--pink-deep); }
+  .stepval small{ display:block; font-size:12px; color:var(--muted); margin-top:0; }
+  /* 難易度パラメータ表示 */
+  .diffparams{ display:flex; flex-direction:column; gap:5px; background:#fff7fa; border:1px solid var(--line); border-radius:12px; padding:9px 13px; margin-top:8px; }
+  .dp{ display:flex; justify-content:space-between; align-items:center; font-size:11.5px; color:var(--muted); }
+  .dp b{ color:var(--ink); font-size:12px; font-weight:800; }
+  /* 枚数を直接入力 */
+  .stepval .tkrow{ display:inline-flex; align-items:baseline; justify-content:center; gap:1px; color:var(--pink-deep); font-weight:800; font-size:17px; }
+  #tkInput{ width:62px; font-size:30px; font-weight:800; color:var(--pink-deep); text-align:center; border:none; border-bottom:2px solid var(--line); background:transparent; font-family:inherit; padding:0 2px; }
+  #tkInput:focus{ outline:none; border-bottom-color:var(--pink); }
+  #tkInput::-webkit-inner-spin-button, #tkInput::-webkit-outer-spin-button{ -webkit-appearance:none; margin:0; }
+  /* 難易度：横棒スライダーで自分で調整 */
+  .diffsliders{ display:flex; flex-direction:column; gap:12px; background:#fff7fa; border:1px solid var(--line); border-radius:12px; padding:13px 15px; margin-top:8px; }
+  .slrow{ display:flex; flex-direction:column; gap:6px; }
+  .sllab{ display:flex; justify-content:space-between; align-items:center; font-size:11.5px; color:var(--muted); }
+  .sllab b{ color:var(--pink-deep); font-size:12.5px; font-weight:800; }
+  .slider{ -webkit-appearance:none; appearance:none; width:100%; height:6px; border-radius:3px; background:linear-gradient(90deg,#ffd6e3,#ff9ec0); outline:none; cursor:pointer; }
+  .slider::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:22px; height:22px; border-radius:50%; background:#fff; border:3px solid var(--pink); cursor:pointer; box-shadow:0 2px 7px rgba(232,93,134,.45); }
+  .slider::-moz-range-thumb{ width:22px; height:22px; border-radius:50%; background:#fff; border:3px solid var(--pink); cursor:pointer; box-shadow:0 2px 7px rgba(232,93,134,.45); }
+
+  /* PC（横幅760px以上）：通話画面を 2カラムの“ビデオ通話”レイアウトに */
+  @media (min-width:760px){
+    body:has(#screen-talk.active) #app{ max-width:1060px; height:100vh; min-height:100vh; box-shadow:0 0 90px rgba(232,93,134,.2); }
+    #screen-talk{ height:100vh; }
+    .talkmain{ flex-direction:row; }
+    .stage{ flex:1.18 1 0; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:26px 20px; }
+    .stage .av{ width:248px; height:248px; }
+    .stage .nick{ font-size:14px; }
+    .stage .moodbar, .stage .hypebar{ width:160px; }
+    .talkside{ flex:.9 1 0; min-width:330px; border-left:1px solid var(--line); background:var(--bg);
+      box-shadow:-10px 0 28px rgba(232,93,134,.06); }
+    .chat{ padding:18px 18px; }
+    .campip{ width:120px; height:150px; right:14px; bottom:14px; }
+    .timeleft{ font-size:15px; }
+  }
+
+  /* ============ 本番リハーサル（実践モード）: オンライン特典会風のグリーン基調 ============ */
+  #screen-prep{ padding:0; background:#ffffff; color:#2a2a2a; height:100vh; height:100dvh; min-height:0; }
+  .prep-top{ display:flex; align-items:center; gap:8px; padding:16px 14px 4px; }
+  .prep-back{ border:none; background:none; font-size:27px; line-height:1; color:#7a8a85; cursor:pointer; width:34px; height:34px; }
+  .prep-title{ flex:1; text-align:center; font-size:17px; font-weight:800; color:#28b187; }
+  .prep-skip{ border:none; background:none; color:#9bb3ab; font-size:13px; font-weight:700; cursor:pointer; padding:6px 8px; }
+  .prep-body{ flex:1; min-height:0; overflow-y:auto; padding:8px 26px 6px; display:flex; flex-direction:column; }
+  .prep-hero{ font-size:60px; text-align:center; margin:22px 0 6px; line-height:1.1; }
+  .prep-h{ font-size:18px; font-weight:800; text-align:center; color:#222; margin:8px 0 16px; }
+  .prep-p{ font-size:13.5px; line-height:1.95; color:#4a4a4a; }
+  .prep-p b{ color:#222; }
+  .prep-p .em{ color:#e0607a; font-weight:800; }
+  .prep-cmp{ display:flex; gap:14px; margin:14px 0 6px; }
+  .prep-cmp > div{ flex:1; text-align:center; background:#f3faf7; border-radius:16px; padding:16px 8px; border:1px solid #e4f2ec; }
+  .prep-cmp .ic{ font-size:38px; line-height:1.1; }
+  .prep-cmp .lb{ font-size:12.5px; font-weight:800; margin-top:8px; }
+  .prep-cmp .ok{ color:#28b187; } .prep-cmp .ng{ color:#e0607a; }
+  .prep-cam{ width:188px; height:236px; margin:16px auto 8px; border-radius:20px; background:#eef5f2; display:flex; align-items:center; justify-content:center; overflow:hidden; border:2px solid #d6ece4; }
+  .prep-cam canvas{ width:100%; height:100%; display:block; }
+  .prep-cam .ph{ font-size:46px; }
+  /* リハーサル：枚数 / テスト / カメラ確認の専用ビジュアル（.prep-cam流用をやめて整える） */
+  .prep-bignum{ text-align:center; margin:26px 0 8px; line-height:1; }
+  .prep-bignum .pn{ font-size:66px; font-weight:900; color:#28b187; }
+  .prep-bignum .pu{ font-size:26px; font-weight:800; color:#28b187; margin-left:3px; }
+  .prep-chk{ display:flex; flex-direction:column; align-items:center; gap:11px; margin:22px 0 10px; }
+  .prep-chk .chkrow{ display:flex; align-items:center; gap:8px; font-size:14px; font-weight:700; color:#444;
+    background:#f3faf7; border:1px solid #e4f2ec; border-radius:12px; padding:11px 0; width:210px; justify-content:center; }
+  .prep-chk .ok{ color:#28b187; font-weight:800; }
+  .prep-status{ text-align:center; margin:24px 0 8px; }
+  .prep-status .ic{ font-size:56px; line-height:1; }
+  .prep-status .lb{ margin-top:10px; font-size:15px; font-weight:800; }
+  .prep-status.on .lb{ color:#28b187; } .prep-status.off .lb{ color:#9aa9a3; }
+  .prep-input{ width:100%; border:2px solid #d6ece4; border-radius:14px; padding:14px; font-size:16px; font-family:inherit; outline:none; margin-top:14px; color:#2a2a2a; }
+  .prep-input:focus{ border-color:#4ec9a0; }
+  .prep-dots{ display:flex; gap:7px; justify-content:center; padding:6px 0 2px; }
+  .prep-dot{ width:8px; height:8px; border-radius:50%; background:#dcdcdc; transition:.2s; }
+  .prep-dot.on{ background:#4ec9a0; transform:scale(1.15); }
+  .prep-foot{ padding:10px 26px calc(20px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:10px; }
+  .prep-btn{ border:none; border-radius:30px; padding:16px; font-size:16px; font-weight:800; font-family:inherit; background:#4ec9a0; color:#fff; cursor:pointer; box-shadow:0 8px 18px rgba(78,201,160,.4); transition:.15s; position:relative; overflow:hidden; }
+  .prep-btn:active{ transform:translateY(1px); }
+  .prep-btn.sub{ background:#fff; color:#36b78c; border:2px solid #bfe9da; box-shadow:none; }
+  #goRehearsal{ background:linear-gradient(180deg,#5fd3ac,#3cc197); box-shadow:0 8px 18px rgba(60,193,151,.38); }
+
+  /* リハーサル中は時間・コンボ・機嫌を隠す（最後まで結果が分からない没入モード） */
+  #screen-talk.rehearsal .timerbar,
+  #screen-talk.rehearsal .timeleft,
+  #screen-talk.rehearsal .moodwrap,
+  #screen-talk.rehearsal .hypewrap{ visibility:hidden; }
+  .rehbadge{ display:inline-block; background:#e4f7ef; color:#2bb189; font-size:11px; font-weight:800; padding:5px 12px; border-radius:20px; margin-bottom:8px; }
+
+  /* 「あと少しです」右上表示 */
+  .almost{ position:absolute; top:34px; right:12px; font-size:11px; font-weight:800; color:#fff; background:rgba(231,89,91,.94);
+    padding:5px 11px; border-radius:14px; opacity:0; transform:translateY(-5px); transition:.3s; pointer-events:none; z-index:5;
+    box-shadow:0 3px 12px rgba(231,89,91,.5); white-space:nowrap; }
+  .almost.show{ opacity:1; transform:none; animation:beat 1.1s ease-in-out infinite; }
+
+  /* ============ DESIGN POLISH v2（HIG / Material3 / 8ptグリッド 反映）============ */
+  :root{
+    --fs-caption:13px; --fs-body:16px; --fs-title:20px; --fs-headline:26px; --fs-display:38px;
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s6:24px; --s8:32px;
+    --r-card:22px; --r-ctl:14px;
+    --el1:0 2px 8px rgba(255,127,168,.12); --el2:0 8px 24px rgba(255,127,168,.16);
+    --brand-ink:#d14e7a;
+  }
+  /* ガラスカードのコントラスト確保（動く背景の上でも読める） */
+  #app{ background:rgba(255,255,255,0.84) !important; }
+  @media (prefers-reduced-transparency:reduce){ #app{ background:#fff !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; } #bgfx{ display:none; } }
+  @media (prefers-reduced-motion:reduce){ #bgfx{ display:none; } *{ animation-duration:.001s !important; } }
+  /* ====== スマホ最適化：余白を詰めて、スクロールせずボタンまで届くように ====== */
+  @media (max-width:430px){
+    .screen{ padding:15px 13px 16px; }
+    h1.logo{ font-size:25px; margin:4px 0 1px; }
+    .lead{ font-size:12px; margin:0 0 10px; line-height:1.55; }
+    .lead br{ display:none; }                 /* 1〜2行に詰める */
+    .hcard{ padding:12px 13px; margin-top:9px; }
+    .hcard-h{ font-size:16px; margin-bottom:8px; }
+    .members{ gap:8px; }
+    .field-label{ margin:9px 2px 4px; }
+    .note{ margin-top:7px; font-size:10.5px; line-height:1.5; }
+    .disclosure{ padding:9px 2px; min-height:40px; }
+    .home-cta{ gap:8px; margin-top:6px; padding-top:10px; }
+    .home-cta .btn{ min-height:48px; }
+  }
+  /* 背の低い画面（小型スマホ等）はさらに縦を詰める */
+  @media (max-height:740px){
+    h1.logo{ font-size:23px; margin:2px 0 0; }
+    .lead{ margin:0 0 7px; }
+    .hcard{ margin-top:7px; padding:11px 13px; }
+    .hcard-h{ margin-bottom:7px; }
+  }
+  /* 入力は16px以上（iOSの自動ズーム防止） */
+  input[type=text], #nickname, #talkInput, .prep-input{ font-size:16px; }
+  /* フォーカスリング（キーボード操作・アクセシビリティ） */
+  :focus-visible{ outline:2px solid var(--brand-ink); outline-offset:2px; }
+  /* ピンク文字のコントラスト改善（#ff7fa8は白地で薄すぎる→濃いローズに） */
+  .label, .chip{ color:var(--brand-ink); }
+  /* タップ領域確保（44px以上） */
+  .stepbtn{ min-width:46px; min-height:46px; }
+  .slider{ height:8px; padding:13px 0; background-clip:content-box; }
+
+  /* ホームを“カード”で整理してスキャンしやすく */
+  .hcard{ background:rgba(255,255,255,.93); border:1px solid #ffe1ec; border-radius:var(--r-card); padding:var(--s4); margin-top:var(--s3); box-shadow:var(--el1); position:relative; z-index:1; }
+  .hcard-h{ font-size:var(--fs-title); font-weight:800; color:var(--brand-ink); display:flex; align-items:center; gap:8px; margin:0 0 var(--s3); letter-spacing:.01em; }
+  .hcard-h .hi{ font-size:18px; }
+  .hcard-h .hcard-sub{ font-size:12px; color:var(--muted); font-weight:700; }
+  .field-label{ display:block; font-size:13px; font-weight:700; color:var(--brand-ink); margin:var(--s4) 2px var(--s2); }
+  .disclosure{ width:100%; text-align:left; background:none; border:none; color:var(--brand-ink); font-family:inherit; font-size:13px; font-weight:800; cursor:pointer; padding:11px 2px; margin-top:4px; min-height:44px; }
+  .disclosure .caret{ display:inline-block; transition:transform .2s; margin-right:4px; }
+  .disclosure[aria-expanded="true"] .caret{ transform:rotate(90deg); }
+  [hidden]{ display:none !important; }
+  /* 開始ボタンを下部に固定（スクロールしても常に手元に） */
+  #screen-home{ height:100vh; height:100dvh; min-height:0; overflow-y:auto; overflow-x:hidden; }
+  .home-cta{ position:sticky; bottom:0; z-index:6; display:flex; flex-direction:column; gap:10px;
+    margin:10px -20px 0; padding:12px 20px calc(14px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, rgba(255,255,255,.97) 58%, rgba(255,255,255,0)); }
+  .home-cta .btn{ min-height:52px; }
+  /* 図鑑：進捗バー＋空状態のヒント */
+  .dexbar{ height:8px; border-radius:4px; background:#ffe1ec; overflow:hidden; margin:8px auto 2px; max-width:240px; }
+  .dexbar > div{ height:100%; background:linear-gradient(90deg,#ff93b6,#ff5e8e); border-radius:4px; transition:width .5s; }
+  .dexempty{ font-size:12px; color:var(--muted); line-height:1.7; margin:10px 8px 2px; }
+
+  /* ============ DESIGN POLISH v3（ボタン体系の統一・結果の見せ場・余白）============ */
+  /* メインボタンは2種（primary=塗り／secondary=ghost）。高さ・角丸・状態を統一 */
+  .btn{ min-height:52px; display:flex; align-items:center; justify-content:center; border-radius:16px; }
+  .btn:disabled, .btn[disabled]{ opacity:.45; box-shadow:none; filter:none; cursor:not-allowed; }
+  .actions{ gap:10px; } .actions .btn{ flex:1; }
+  /* 結果＝“見せ場”。ランク/点数を主役に、カードはトークン準拠 */
+  .scorecard{ border-radius:var(--r-card); box-shadow:var(--el2); padding:24px 22px; }
+  .rank{ font-size:72px; }
+  .total{ font-size:14px; color:var(--muted); } .total b{ font-size:36px; }
+  .idolfb{ border-radius:var(--r-ctl); }
+  .endingcard{ border-radius:var(--r-card); }
+  /* キュー画面の文字・余白を整える */
+  .q-status{ font-size:15px; } .q-big{ font-size:46px; } .q-sub{ font-size:13px; color:var(--muted); }
+  /* 設定＝データ管理（記憶の個別削除・全リセット） */
+  .modalbox{ max-height:88vh; overflow-y:auto; }
+  .memrow{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; color:var(--ink);
+    background:#fff7fa; border:1px solid var(--line); border-radius:12px; padding:8px 12px; margin-top:6px; }
+  .memrow small{ color:var(--muted); }
+  .memdel{ border:1.5px solid #f3b6c2; background:#fff; color:var(--brand-ink); font-family:inherit; font-size:12px; font-weight:800;
+    border-radius:10px; padding:6px 12px; cursor:pointer; min-height:32px; }
+  .memdel:active{ background:#ffe3ec; }
+  .memdel.armed{ background:#ff5e8e; border-color:#ff5e8e; color:#fff; }
+  /* 推し度（信仰レベル）＆名前の記憶 */
+  .m-oshi{ font-size:10px; font-weight:800; color:var(--brand-ink); margin-top:3px; letter-spacing:-.04em; white-space:nowrap; }
+  .oshiline{ font-size:13px; font-weight:800; color:var(--brand-ink); background:#fff3f8; border:1px solid var(--line); border-radius:12px; padding:8px 12px; margin:8px 0 2px; }
+  .namereuse{ margin-top:8px; }
+  .namechip{ border:1.5px solid #f3b6c2; background:#fff; color:var(--brand-ink); font-family:inherit; font-size:12.5px; font-weight:800; border-radius:20px; padding:8px 14px; cursor:pointer; min-height:36px; }
+  .namechip:active{ background:#ffe3ec; }
+  /* オーナーコード（本人だけ無制限にできる） */
+  .ownerrow{ display:flex; gap:8px; align-items:center; }
+  #ownerCode{ flex:1; border:2px solid var(--line); border-radius:12px; padding:11px 12px; font-size:16px; font-family:inherit; outline:none; }
+  #ownerCode:focus{ border-color:var(--brand); }
+  .ownerrow .btn{ width:auto; min-height:44px; padding:0 18px; }
+  .owneron{ font-size:14px; font-weight:800; color:#1fb9a6; background:#f4fffd; border:1px solid #bfe9da; border-radius:12px; padding:10px 14px; }
+  /* 記憶一覧（内容プレビュー付き） */
+  .memrow2{ background:#fff7fa; border:1px solid var(--line); border-radius:12px; padding:8px 12px; margin-top:6px; }
+  .mr-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; font-weight:700; color:var(--ink); }
+  .mr-head small{ color:var(--muted); font-weight:400; }
+  .mr-prev{ font-size:11px; color:var(--muted); line-height:1.5; margin-top:4px; word-break:break-word; }
+  .mr-sub{ font-size:11px; color:var(--brand-ink); font-weight:700; margin-top:3px; letter-spacing:.02em; }
+  /* ホーム：関係インフォ（推し度＋前回の流れ＋名前） */
+  .relinfo{ background:#fff3f8; border:1px solid var(--line); border-radius:14px; padding:10px 12px; margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+  .ri-oshi{ font-size:12.5px; font-weight:800; color:var(--brand-ink); }
+  .ri-prev{ font-size:11px; color:var(--muted); line-height:1.55; word-break:break-word; }
+  .ri-hint{ font-size:10px; color:var(--muted); margin-left:0; line-height:1.5; }
+  .ri-label{ font-size:11px; font-weight:800; color:var(--brand-ink); }
+  .profchips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .profchip{ border:1.5px solid var(--line); background:#fff; color:var(--brand-ink); font-family:inherit; font-size:11.5px; font-weight:800; border-radius:16px; padding:7px 11px; cursor:pointer; min-height:34px; white-space:nowrap; }
+  .profchip.on{ background:linear-gradient(180deg,#ff93b6,#ff5e8e); color:#fff; border-color:#ff5e8e; }
+  .profchip:active{ transform:scale(.96); }
+  /* 上部の戻る／モーダルの×（スクロールせず戻れる） */
+  .topback{ display:inline-flex; align-items:center; gap:2px; background:rgba(255,255,255,.72); border:1px solid var(--line); color:var(--brand-ink); font-family:inherit; font-size:14px; font-weight:800; border-radius:20px; padding:8px 16px; cursor:pointer; align-self:flex-start; margin-bottom:8px; min-height:40px; }
+  .topback:active{ transform:scale(.96); }
+  .modalbox{ position:relative; }
+  .modalx{ position:sticky; top:-4px; float:right; width:34px; height:34px; border-radius:50%; border:none; background:#f1e9ee; color:var(--muted); font-size:14px; font-weight:800; cursor:pointer; z-index:3; }
+  .modalx:active{ transform:scale(.9); }
+  .profdel{ align-self:flex-start; border:none; background:none; color:#c2456b; font-family:inherit; font-size:11px; font-weight:800; cursor:pointer; padding:4px 2px; text-decoration:underline; }
+  /* 部（1〜5部）選択 */
+  .bu-row{ display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .bu-label{ font-size:12px; font-weight:800; color:var(--brand-ink); flex:0 0 auto; }
+  .bu-btns{ display:flex; gap:5px; flex:1; }
+  .bu-btn{ flex:1; border:1.5px solid var(--line); background:#fff; color:var(--brand-ink); font-family:inherit; font-size:12px; font-weight:800; border-radius:10px; padding:8px 0; cursor:pointer; min-height:38px; }
+  .bu-btn.sel{ background:linear-gradient(180deg,#ff93b6,#ff5e8e); color:#fff; border-color:#ff5e8e; }
+  .bu-btn:active{ transform:scale(.96); }
+</style>
+</head>
+<body>
+<canvas id="bgfx"></canvas>
+<div id="app">
+
+  <!-- ============ HOME ============ -->
+  <section id="screen-home" class="screen active">
+    <div class="topicons">
+      <button class="iconbtn" id="homeHelp" title="あそびかた">❓</button>
+      <button class="iconbtn" id="homeDex" title="エンディング図鑑">📔</button>
+      <button class="iconbtn" id="homeSettings" title="設定">⚙️</button>
+    </div>
+    <h1 class="logo">meegri<small>ミーグリ練習シミュレーター</small></h1>
+    <p class="lead">推しとのミーグリを、本番そっくりに練習。<br>緊張・ラグ・時間切れまでリアルに。</p>
+
+    <!-- ① 相手をえらぶ -->
+    <div class="hcard">
+      <div class="hcard-h"><span class="hi">💗</span>① 相手をえらぶ</div>
+      <div class="members" id="members"></div>
+      <label class="field-label" for="nickname">呼ばれたい名前</label>
+      <input type="text" id="nickname" maxlength="28" placeholder="例）りょうま ／ ドラマの話に来たよ" />
+      <div id="nameReuse" class="namereuse" style="display:none;"></div>
+    </div>
+
+    <!-- ② チケット -->
+    <div class="hcard">
+      <div class="hcard-h"><span class="hi">🎟️</span>② チケット・部</div>
+      <div class="stepper">
+        <button class="stepbtn" id="tkMinus" aria-label="枚数を減らす">−</button>
+        <div class="stepval"><span class="tkrow"><input type="number" id="tkInput" min="1" max="20" value="2" inputmode="numeric" aria-label="参加枚数" />枚</span><small id="tkSec">約20秒</small></div>
+        <button class="stepbtn" id="tkPlus" aria-label="枚数を増やす">＋</button>
+      </div>
+      <div class="bu-row"><span class="bu-label">何部？</span><div class="bu-btns" id="buBtns"></div></div>
+    </div>
+
+    <!-- ③ むずかしさ -->
+    <div class="hcard">
+      <div class="hcard-h"><span class="hi">🎚️</span>③ むずかしさ</div>
+      <div class="diffs" id="diffs"></div>
+      <button class="disclosure" id="diffMore" aria-expanded="false"><span class="caret">▸</span>詳細（自分で調整）</button>
+      <div class="diffsliders" id="diffSliders" hidden>
+        <div class="slrow"><div class="sllab"><span>⏱ 持ち時間</span><b id="slSecVal">×1.0</b></div><input type="range" class="slider" id="slSec" min="0.6" max="3" step="0.1" value="1" aria-label="持ち時間"></div>
+        <div class="slrow"><div class="sllab"><span>📶 通信ラグ</span><b id="slLagVal">標準</b></div><input type="range" class="slider" id="slLag" min="0.4" max="2" step="0.1" value="1" aria-label="通信ラグ"></div>
+        <div class="slrow"><div class="sllab"><span>🤫 無言までの猶予</span><b id="slIdleVal">4.5秒</b></div><input type="range" class="slider" id="slIdle" min="2.5" max="9" step="0.5" value="4.5" aria-label="無言までの猶予"></div>
+      </div>
+    </div>
+
+    <!-- オプション（折りたたみ） -->
+    <button class="disclosure" id="optMore" aria-expanded="false"><span class="caret">▸</span>オプション（カメラ・前回の続き）</button>
+    <div id="optBody" hidden>
+      <div class="hcard">
+        <div class="hcard-h"><span class="hi">📷</span>カメラ <span class="hcard-sub">自分の顔・任意</span></div>
+        <button class="camtoggle" id="camToggle" role="switch" aria-checked="false"><span class="ctxt">📷 自分の顔も映す</span><span class="swt" aria-hidden="true"><span class="knob"></span></span></button>
+        <p class="camnote">自分の顔をふんわり加工で表示（端末内のみ・録画/送信なし）。</p>
+        <div class="field-label" id="memLabel" style="display:none;">前回の続き</div>
+        <button class="camtoggle" id="memToggle" role="switch" aria-checked="false" style="display:none; margin-top:4px;"><span class="ctxt">🧠 前回の会話を覚えてもらう</span><span class="swt" aria-hidden="true"><span class="knob"></span></span></button>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+    <p class="note">※登場するのは架空のオリジナルキャラクター（実在の人物・団体・サービスとは一切関係ありません）。</p>
+    <div class="home-cta">
+      <button class="btn" id="goQueue">待機列に並ぶ</button>
+      <button class="btn ghost" id="goRehearsal">🎬 本番リハーサル（はじめての方向け）</button>
+    </div>
+  </section>
+
+  <!-- ============ QUEUE ============ -->
+  <section id="screen-queue" class="screen">
+    <div class="q-wrap">
+      <div class="bars"><i></i><i></i><i></i><i></i></div>
+      <div class="spinner"></div>
+      <div class="q-av" id="queueAv"></div>
+      <div class="q-status" id="qStatus">通信テスト中…</div>
+      <div class="q-big" id="qBig"></div>
+      <div class="q-sub" id="qSub"></div>
+    </div>
+  </section>
+
+  <!-- ============ PREP（本番リハーサル・実践モード）============ -->
+  <section id="screen-prep" class="screen">
+    <div class="prep-top">
+      <button class="prep-back" id="prepBack" title="戻る">‹</button>
+      <div class="prep-title" id="prepTitle">使い方</div>
+      <button class="prep-skip" id="prepSkip">スキップ »</button>
+    </div>
+    <div class="prep-body" id="prepBody"></div>
+    <div class="prep-dots" id="prepDots"></div>
+    <div class="prep-foot" id="prepFoot"></div>
+  </section>
+
+  <!-- ============ TALK ============ -->
+  <section id="screen-talk" class="screen">
+    <div class="callbar">
+      <div class="sig"><i style="height:6px"></i><i style="height:9px"></i><i style="height:12px"></i><i style="height:14px"></i></div>
+      <div class="who" id="callWho">meegri（練習）</div>
+      <div class="rec">● 録画禁止</div>
+    </div>
+    <div class="timerbar" id="timerbar"><div id="timerfill"></div></div>
+    <div class="talkmain">
+      <div class="stage">
+        <div class="evbanner" id="evBanner" style="display:none"></div>
+        <div class="lag" id="lagLabel">📶 通信ラグ…</div>
+        <div class="timeleft" id="timeLeft">0.0s</div>
+        <div class="almost" id="almostDone">⏳ あと少しです</div>
+        <div class="av" id="talkAv"></div>
+        <div class="nick" id="talkNick"></div>
+        <div class="moodwrap"><span>機嫌</span><div class="moodbar"><div id="moodfill"></div></div><span class="moodface" id="moodFace">😊</span></div>
+        <div class="hypewrap"><span>🔥</span><div class="hypebar"><div id="hypefill"></div></div><span class="combo" id="comboLabel"></span></div>
+        <div class="campip" id="camPip" style="display:none"><canvas id="camfx"></canvas><span class="camlabel">あなた</span></div>
+      </div>
+      <div class="talkside">
+        <div class="chat" id="chat"></div>
+        <div class="chips" id="chips"></div>
+        <div class="ctrlrow">
+          <button class="ctrlbtn cmic" id="micBtn" title="マイクで話す（音声入力）"><span class="ci">🎙️</span><span class="cl">話す</span></button>
+          <button class="ctrlbtn cvoice" id="muteBtn" title="アイドルの声 ON/OFF"><span class="ci">🔊</span><span class="cl">声</span></button>
+          <button class="ctrlbtn ccam" id="camBtn" title="カメラ ON/OFF（自分の顔・端末内のみ）"><span class="ci">📷</span><span class="cl">カメラ</span></button>
+        </div>
+        <div class="inputrow">
+          <input type="text" id="talkInput" maxlength="60" placeholder="🎙️で話す→もう一度🎙️で送信／入力はEnter" autocomplete="off" />
+          <button class="sendbtn" id="sendBtn">送信</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RESULT ============ -->
+  <section id="screen-result" class="screen">
+    <h1 class="logo" style="font-size:22px; margin-top:4px;">ミーグリ終了！</h1>
+    <div class="scorecard">
+      <div class="endingcard" id="endingCard"></div>
+      <div class="rank" id="rank">A</div>
+      <div class="total"><b id="totalScore">0</b> / 100点</div>
+      <div id="bestLine"></div>
+      <div id="oshiLine"></div>
+      <div class="idolfb" id="idolFb"></div>
+      <div id="aiVerdict"></div>
+      <div class="items" id="items"></div>
+      <button class="camtoggle" id="rememberToggle" role="switch" aria-checked="false" style="margin-top:14px; display:none;"><span class="ctxt">📝 今回の会話を覚えてもらう</span><span class="swt" aria-hidden="true"><span class="knob"></span></span></button>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="toHome">メンバー選択へ</button>
+      <button class="btn" id="retry">もう一度</button>
+    </div>
+    <div class="actions" style="margin-top:10px;">
+      <button class="btn ghost" id="toDex">📔 図鑑</button>
+      <button class="btn ghost" id="shareBtn">📤 シェア</button>
+    </div>
+    <p class="note">採点・アドバイスは実際のミーグリ攻略に基づいています。</p>
+  </section>
+
+  <!-- ============ DEX（エンディング図鑑）============ -->
+  <section id="screen-dex" class="screen">
+    <button class="topback" id="dexBackTop">‹ もどる</button>
+    <h1 class="logo" style="font-size:20px; margin-top:2px;">エンディング図鑑</h1>
+    <p class="lead" id="dexProgress"></p>
+    <div class="dexgrid" id="dexGrid"></div>
+    <div class="spacer"></div>
+    <button class="btn" id="dexBack">もどる</button>
+    <p class="note">いろんな終わり方を集めよう。？？？はまだ見ていないエンディング（ヒント付き）。</p>
+  </section>
+
+  <!-- ============ 設定モーダル ============ -->
+  <div id="setModal" class="modal" style="display:none">
+    <div class="modalbox">
+      <button class="modalx" id="setX" aria-label="閉じる">✕</button>
+      <h2 class="modalh">⚙️ 設定</h2>
+      <div class="label">声の速さ</div>
+      <div class="diffs" id="setRate"></div>
+      <div class="label">効果音</div>
+      <div class="diffs" id="setSfx"></div>
+      <div class="label">AI会話の残り（今日）</div>
+      <div id="setAiRemain" style="font-size:13px; color:var(--muted); padding:2px 2px 0;"></div>
+      <div id="ownerArea" style="margin-top:8px;"></div>
+      <div class="label">データ管理</div>
+      <button class="camtoggle" id="saveRecToggle" role="switch" aria-checked="true"><span class="ctxt">📝 記録を残す（図鑑・自己ベスト）</span><span class="swt" aria-hidden="true"><span class="knob"></span></span></button>
+      <p class="camnote">オフ＝練習モード（図鑑・自己ベストに残さない）。</p>
+      <div id="memManage"></div>
+      <button class="btn ghost" id="resetRecords" style="margin-top:10px;">🗑 すべての記録をリセット</button>
+      <div id="resetConfirm" hidden style="margin-top:10px; text-align:center;">
+        <p class="camnote" style="margin:0 0 8px;">図鑑・自己ベスト・会話の記憶を全部消します。元に戻せません。</p>
+        <div class="actions" style="margin-top:0;"><button class="btn ghost" id="resetCancel">やめる</button><button class="btn" id="resetYes" style="background:linear-gradient(180deg,#ff7a7a,#e7595b);">はい、消す</button></div>
+      </div>
+      <button class="btn" id="setClose" style="margin-top:18px;">閉じる</button>
+    </div>
+  </div>
+
+  <!-- ============ チュートリアル（あそびかた）============ -->
+  <div id="tutModal" class="modal" style="display:none">
+    <div class="modalbox">
+      <div class="tutico" id="tutIco"></div>
+      <h2 class="modalh" id="tutTitle"></h2>
+      <p class="tutbody" id="tutBody"></p>
+      <div class="tutdots" id="tutDots"></div>
+      <div class="actions" style="margin-top:8px;">
+        <button class="btn ghost" id="tutPrev">もどる</button>
+        <button class="btn" id="tutNext">つぎへ</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="splash"><div class="sl">meegri<small>ミーグリ練習シミュレーター</small></div></div>
+
+<script>
+"use strict";
+/* ============================================================
+   0. データ：メンバー・枚数・鉄板フレーズ
+   ============================================================ */
+const MEMBERS = [
+  { id:"yui", name:"夏目 ゆい", cc:"げんき", color:"#ff7fa8", hair:"#6b4a3a", tone:"genki",
+    ich:"わたし", end:"だよ",
+    open:["来てくれてありがとう〜！会えてうれしい！","やっほー！今日はよろしくね♪"],
+    v:{
+      greet:["やっほー！来てくれてめっちゃうれしい！","わー会えた！元気だった〜？","こんにちは！今日も来てくれてありがとう！","きゃー！来てくれた！今日も最高だね！","おまたせ〜！会いたかったんだから！"],
+      compliment:["えー！うれしい！もっと言って〜！","やった！わたしもあなたのこと大好きだよ！","てれちゃうなぁ、ありがとう！"],
+      request:["いいよ！『{nick}』〜！届けっ！","まかせて！はいっ、元気100倍チャージ！","オッケー！ファイトー！いっぱーつ！"],
+      romance:["えー！うれしい！『{nick}』はわたしの1番の彼氏だよ〜！","もう〜！本気にしちゃうからね！？笑","じゃあ婚姻届持ってきて〜！なんてね、えへへ"],
+      question:["えー、なんだろ！…あ、今あなたと話せてるのが1番楽しい！","ひみつ！…じゃなくて、今度ね！","うーんとね、元気が取り柄！えへへ"],
+      bye:["また絶対来てね！待ってるよ〜！","今日めっちゃ楽しかった！ありがとう！","ばいばーい！また元気な顔見せてね！"],
+      repeat:["あれ？それさっきも聞いたよ〜？笑","もう1回言ってる！緊張してる〜？","おんなじこと2回！ふふっ、落ち着いて〜！"],
+      lowmood:["…うん。","そっか…。","……うん。"],
+      cont:["うんうん！それで！？","へぇー！いいね！もっと教えて！","そうなんだ！わくわくする！","えー！すごいじゃん！","それでそれで〜？","わかる〜！うんうん！"],
+      confused:["ん？ごめん、もう1回言って〜！","え、どゆこと！？ふふ、難しい〜！","うーん、聞き取れなかったかも！もう1回！"],
+      silence:["緊張してる〜？大丈夫、わたしがいるよ！なんでも聞いて！","じゃあわたしから！今日はどうやって来たの〜？","あれ？聞こえてるかな…？もしもーし！"],
+      tooLong:["わー、いっぱい！うれしい〜！けどちょっと時間が〜！","ありがと！全部聞きたいけど、短くてもいいんだよ？","めっちゃ語ってくれた！ふふ、うれしい！"],
+      oneSided:["まってまって〜！わたしもしゃべりたい！笑","おおっと！わたしの番ちょうだい〜！","聞いてるよ〜！でもわたしにも一言ちょうだい！"],
+      favHit:["わー！その話だいすき！テンション上がる〜！","えっ気が合う！わたしもそれ大好きなんだ！","うれしー！もっとその話しよ〜！"]
+    } },
+  { id:"hinano", name:"星川 ひなの", cc:"おっとり", color:"#9b8cff", hair:"#3a3550", tone:"cool",
+    ich:"うち", end:"かな",
+    open:["こんにちは。会いに来てくれたんだね、ありがとう。","ふふ、緊張してる？ゆっくりで大丈夫だよ。"],
+    v:{
+      greet:["こんにちは。来てくれて、ありがとう。","ふふ、緊張してる？ゆっくりでいいよ。","やっと会えたね。うれしいな。","いらっしゃい。会いたかったよ。","ふふ、来てくれると思ってた。"],
+      compliment:["ふふ、ありがとう。そんなに見つめられると照れちゃうな。","うれしい…大事にするね、その言葉。","もう、上手なんだから。"],
+      request:["いいよ。『{nick}』…ふふ、いい響き。","うん、まかせて。そっと応援、送るね。","ふふ、しょうがないなぁ。はい、どうぞ。"],
+      romance:["ふふ…うれしい。うちの彼氏は『{nick}』で決まり、かな？","もう、そういうこと言うと…本気にしちゃうよ？","婚姻届？ふふ、気が早いなあ。…なんてね。"],
+      question:["うーん…内緒、かな。次に会えたら、こっそり教えてあげる。","ふふ、気になる？うちのこと。","さあ、どうだろうね。ひみつ。"],
+      bye:["また会いに来てね。待ってるから。","今日はありがとう。すごく癒されたな。","ばいばい。…次も、楽しみにしてる。"],
+      repeat:["ふふ、それさっきも聞いたかな？","もう、同じことばっかり。緊張してる？","ん、デジャヴ？ふふ。"],
+      lowmood:["…そう。","ふぅん。","……。"],
+      cont:["ふぅん、それで？","へえ、いいね。続けて。","うん、聞いてるよ。それから？","なるほどね。もっと聞かせて。","ふふ、おもしろい。それで？"],
+      confused:["ん…？ごめん、もう一回いいかな。","ふふ、ちょっと分からなかった…ゆっくりでいいよ。","うーん、難しいな。言い直してくれる？"],
+      silence:["ふふ、緊張しちゃった？ゆっくりで大丈夫だよ。","うちから話そっか。…今日、楽しかったことある？","あれ…聞こえてる？無理しないでね。"],
+      tooLong:["ふふ、たくさん…うれしいな。でも、短くても伝わってるよ。","いっぱいありがとう。…時間、大事にしようね？","気持ち、ちゃんと受け取ったよ。ゆっくりでいいからね。"],
+      oneSided:["ふふ、ちょっと待って？うちにも、しゃべらせてほしいな。","聞いてるよ。…でも、会話はキャッチボール、ね？","うんうん。…ねえ、うちのことも聞いてくれる？"],
+      favHit:["ふふ、その話…うちも好きなんだ。気が合うね。","えっ、わかってくれるんだ。うれしいな…。","いいね、その話。ずっと聞いていたいな。"]
+    } },
+  { id:"koharu", name:"花村 こはる", cc:"あまえんぼ", color:"#3fc8b4", hair:"#5a4636", tone:"cute",
+    ich:"こはる", end:"だもん",
+    open:["わーい来てくれた！こはる待ってたんだもん！","えへへ、会えた〜！うれしいな♪"],
+    v:{
+      greet:["わーい来てくれた！こはる待ってたんだもん！","えへへ、会えた〜！うれしいなっ♡","やっほー！こはるのこと覚えてる？♡","きゃー！来てくれたの！？だいすき♡","えへへっ、ずーっと待ってたんだもん！"],
+      compliment:["えへへ♡うれしいの！もっとほめてほめて〜！","やったー！こはるもあなたのこと大好きだもん♡","きゃー！てれるぅ〜♡"],
+      request:["いいよっ！『{nick}』〜！えいっ♡","まかせてっ！こはるパワー、ぎゅーっ♡","オッケーなの！はい、ハートあげる♡"],
+      romance:["えー！うれしいの！『{nick}』はこはるの1番の彼氏さんだもん♡","もう〜！本気にしちゃうもん！？えへへ♡","じゃあ結婚なの〜！…なんてね、えへへ♡"],
+      question:["ひみつなの〜♡気になる？えへへ","うーん、こはるね…今あなたと話せて幸せだもん♡","えー、聞いちゃうの？もう〜♡"],
+      bye:["やだ、もう終わり？絶対また来てね、約束だもん！","今日たのしかったの！ばいばい、大好き♡","やだやだ、まだ話したいもん…！また来てね！"],
+      repeat:["あれ？それさっきも言ったもん！","もう〜、おんなじこと2回言ってる！えへへ","んん？聞いたことあるもん、それ！"],
+      lowmood:["…ぶー。","やだ…。","……むぅ。"],
+      cont:["うんうん！それでそれで？","えー！すごいの！もっと聞きたいもん！","そうなんだ〜！えへへ","わー！もっと聞かせてほしいもん！","うんうん！こはる聞いてるよ♡"],
+      confused:["ふぇ？こはる分かんなかったもん…もう1回？","え、どういうこと〜？むむっ","うーん、なぞなぞ？もう1回言ってほしいもん！"],
+      silence:["どうしたの〜？こはるとお話ししよ？","ねぇねぇ、こはるの好きなところ教えて〜♡","む〜、なんか言ってよ〜！さみしいもん…"],
+      tooLong:["わー、いっぱいなの！うれしいけど時間が〜！","こはる全部聞きたいもん！けど短くてもいいんだよ？","いっぱいありがとなの♡ふぅ、ドキドキしちゃった！"],
+      oneSided:["まってまって〜！こはるもお話したいもん！","むー、こはるの番は〜？笑","聞いてるもん！でもこはるにもしゃべらせて〜！"],
+      favHit:["わーい！それこはるだいすきなの♡わかってるぅ〜！","えーっ気が合うもん！うれしい♡","もっとその話して〜！こはるニコニコだもん♡"]
+    } },
+];
+// 参加枚数は自分で選べる（1枚＝約10秒）
+const TK_MIN=1, TK_MAX=20;
+function makeTicket(n){ n=Math.max(TK_MIN,Math.min(TK_MAX,n||1)); return { count:n, n:n, label:n+"枚", sub:"約"+(n*10)+"秒", sec:n*10, exp:n }; }
+function diffLagLabel(l){ return l<0.8?"弱":(l<1.2?"標準":(l<1.6?"強め":"強")); }
+function renderDiffParams(df){
+  var el=document.getElementById("diffParams"); if(!el||!df) return;
+  el.innerHTML =
+    '<div class="dp"><span>⏱ 持ち時間</span><b>×'+df.secMul.toFixed(1)+'</b></div>'+
+    '<div class="dp"><span>📶 通信ラグ</span><b>'+diffLagLabel(df.lagMul)+'</b></div>'+
+    '<div class="dp"><span>🤫 無言までの猶予</span><b>'+(df.idle/1000).toFixed(1)+'秒</b></div>';
+}
+const CHIPS = [
+  { t:"こんにちは！",            intent:"greet" },
+  { t:"今日も可愛いね！",        intent:"compliment" },
+  { t:"衣装すごく似合ってる！",  intent:"compliment" },
+  { t:"ドラマ見たよ、おめでとう！", intent:"congrats" },
+  { t:"あだ名つけて！",          intent:"request" },
+  { t:"釣ってください！",        intent:"request" },
+  { t:"受験応援して！",          intent:"request" },
+  { t:"付き合って！",            intent:"romance" },
+  { t:"また来るね！",            intent:"bye" },
+];
+const DIFFS = [
+  { key:"easy",   label:"やさしめ", sub:"ラグ弱・長め", lagMul:0.55, secMul:1.4, idle:6500 },
+  { key:"normal", label:"ふつう",   sub:"標準",        lagMul:1.0,  secMul:1.0, idle:4500 },
+  { key:"hard",   label:"ガチ",     sub:"ラグ強・短め", lagMul:1.7,  secMul:0.8, idle:3300 },
+  { key:"slow",   label:"じっくり", sub:"時間たっぷり・会話練習", lagMul:0.7, secMul:3.0, idle:9000 },
+];
+// 推しの「刺さる話題」（当てると特別に喜ぶ＝推しを分かってる度）
+const FAV = {
+  yui:    /(ダンス|踊|スポーツ|運動|体動か|汗|筋トレ|ライブ)/,
+  hinano: /(本|読書|小説|映画|カフェ|紅茶|コーヒー|静か|猫|月)/,
+  koharu: /(スイーツ|ケーキ|甘い|お菓子|プリン|チョコ|動物|うさぎ|犬|ぬいぐるみ)/,
+};
+// 見た目の個性（髪型・髪色・髪飾り・瞳の大きさ）でしっかり差別化
+const STYLE = {
+  yui:    { hair:"twin", hairCol:"#a3673c", acc:"twinbow", accCol:"#ff6fa3", eye:1.06 },
+  hinano: { hair:"long", hairCol:"#2c2740", acc:"star",    accCol:"#c3b2ff", eye:0.9  },
+  koharu: { hair:"bob",  hairCol:"#8a5430", acc:"topbow",  accCol:"#5fd0c0", eye:1.24 },
+};
+// 自己ベスト（ローカル保存）
+const BEST_KEY="meegri_best_v1";
+function loadBest(){ try{ return JSON.parse(localStorage.getItem(BEST_KEY))||{}; }catch(e){ return {}; } }
+function saveBest(b){ try{ localStorage.setItem(BEST_KEY, JSON.stringify(b)); }catch(e){} }
+let BEST = loadBest();
+
+// ===== エンディング図鑑 =====
+const ENDINGS = [
+  { id:"perfect",  name:"運命の一番星",   icon:"🌟", rarity:"secret",
+    desc:"会話も態度も完璧。推しと最高の時間を過ごせた、めったに見られない最良の結末。", hint:"減点ゼロ＆最高ランクで終えると…？" },
+  { id:"great",    name:"推しキュンエンド", icon:"💖", rarity:"normal",
+    desc:"自然な会話で推しの心を掴んだ、理想的なミーグリ。", hint:"高ランクで仲良く終わると。" },
+  { id:"good",     name:"また会おうねエンド", icon:"😊", rarity:"normal",
+    desc:"そこそこ盛り上がって、笑顔でお別れ。次につながる終わり方。", hint:"ふつうに楽しく終わると。" },
+  { id:"blank",    name:"頭まっしろエンド", icon:"😶", rarity:"normal",
+    desc:"緊張で何も話せないまま終了。ミーグリ初心者あるある。", hint:"ほとんど話さずに終わると。" },
+  { id:"maki",     name:"巻き！エンド",     icon:"⏱️", rarity:"normal",
+    desc:"言いたいことの途中で時間切れ。ラグもあってリアルで頻発。", hint:"打ちかけのまま時間切れになると。" },
+  { id:"boyfriend",name:"1番の彼氏エンド",  icon:"💍", rarity:"special",
+    desc:"「◯◯は1番の彼氏だよ」を引き出した、ファン冥利に尽きる結末。", hint:"“営業”を引き出して仲良く終わると。" },
+  { id:"soulfan",  name:"魂のファンエンド", icon:"🔥", rarity:"special",
+    desc:"推しの好きな話題をいくつも当て、深く分かり合えた。", hint:"推しの“刺さる話題”を複数当てると。" },
+  { id:"hype",     name:"大盛り上がりエンド", icon:"🎉", rarity:"special",
+    desc:"会話が途切れず弾みまくり、盛り上がりMAX。", hint:"コンボを繋いで盛り上がりMAXに。" },
+  { id:"creep",    name:"ドン引きエンド",   icon:"🥶", rarity:"special",
+    desc:"一線を越えて推しに引かれてしまった…練習でよかった。", hint:"不適切・物理接触をすると。" },
+  { id:"salt",     name:"塩対応エンド",     icon:"🧊", rarity:"special",
+    desc:"機嫌をすっかり損ねて塩対応のまま終了。", hint:"機嫌を大きく下げると。" },
+  { id:"oneway",   name:"しゃべりすぎエンド", icon:"🗣️", rarity:"special",
+    desc:"自分ばかり話してしまった。会話はキャッチボール。", hint:"一方的に話し続けると。" },
+  { id:"nazo",     name:"珍問エンド",       icon:"❓", rarity:"special",
+    desc:"意味不明な発言で推しを困惑させ続けた。", hint:"辻褄の合わない発言を連発すると。" },
+  { id:"birthday", name:"お誕生日エンド",   icon:"🎂", rarity:"secret",
+    desc:"推しの誕生日に会えた特別な日。一生の思い出。", hint:"推しの誕生日に会いに行くと。" },
+  { id:"xmas",     name:"聖夜エンド",       icon:"🎄", rarity:"secret",
+    desc:"クリスマスに推しと過ごせた、きらめく結末。", hint:"12/24・25に会いに行くと。" },
+  { id:"godtier",  name:"神対応エンド",     icon:"😇", rarity:"secret",
+    desc:"終始ごきげんで好感度も最高潮。推しが全力で優しくしてくれる“神対応”の一日。", hint:"機嫌も好感度もとても高いまま終えると…？" },
+  { id:"okaeri",   name:"おかえりエンド",   icon:"🔁", rarity:"special",
+    desc:"前回の会話を覚えていてくれた、特別な再会。「また来てくれたんだね」。", hint:"“前回の続き”をオンにして、仲良く話すと。" },
+  { id:"recover",  name:"持ち直しエンド",   icon:"🌈", rarity:"special",
+    desc:"一度は気まずくなったけど、最後はちゃんと笑顔に。挽回できた一日。", hint:"機嫌を大きく下げてから、最後に持ち直すと。" },
+  { id:"natural",  name:"天然・癒しエンド", icon:"🌀", rarity:"special",
+    desc:"ちょっと不思議な発言で推しをクスッとさせた、ゆるくて和む時間。", hint:"うっかり1回だけ謎発言、でも雰囲気は良いまま終えると。" },
+  { id:"fastmaki", name:"早口巻きエンド",   icon:"💨", rarity:"special",
+    desc:"伝えたいことを詰め込みすぎて、最後は早口で時間切れ。気持ちは伝わった…はず！", hint:"長い発言を重ねたまま時間切れになると。" },
+  { id:"gachiSafe",name:"ガチ恋セーフエンド", icon:"💕", rarity:"special",
+    desc:"グイグイ攻めたけど、ギリギリ可愛く受け止めてもらえた、きわどい結末。", hint:"押せ押せの好意を、機嫌を保ったまま伝えきると。" },
+  { id:"manners",  name:"礼儀正しエンド",   icon:"🎀", rarity:"normal",
+    desc:"丁寧で気持ちのいい会話。推しにとっても話しやすい、好印象なファン。", hint:"失礼ゼロで好感度そこそこ、無難に良く終えると。" },
+  { id:"loyal",    name:"一途エンド",       icon:"💞", rarity:"special",
+    desc:"「君だけだよ」を伝えきって、推しとの絆がぐっと深まった結末。", hint:"一途な好意（君だけ・ずっと推す等）を伝えると。" },
+  { id:"caught",   name:"浮気バレエンド",   icon:"💢", rarity:"special",
+    desc:"他の子の話がバレて、推しをやきもきさせてしまった…練習でよかった。", hint:"他のメンバーの話を露骨にすると。" },
+];
+const ENDING_MAP = (function(){ const o={}; ENDINGS.forEach(e=>o[e.id]=e); return o; })();
+const BDAY = { yui:[7,7], hinano:[11,8], koharu:[3,3] };
+const DEX_KEY="meegri_dex_v1";
+function loadDex(){ try{ return JSON.parse(localStorage.getItem(DEX_KEY))||{}; }catch(e){ return {}; } }
+function saveDex(d){ try{ localStorage.setItem(DEX_KEY, JSON.stringify(d)); }catch(e){} }
+let DEX = loadDex();
+
+// ===== 会話メモリ（前回の続き・メンバー別）=====
+const MEM_KEY="meegri_mem_v1";
+const MEM_TTL_MS=30*24*60*60*1000;   // 1ヶ月以上“使われていない”記憶は自動で消す
+function nowMs(){ try{ return new Date().getTime(); }catch(e){ return 0; } }
+function loadMem(){ try{ return JSON.parse(localStorage.getItem(MEM_KEY))||{}; }catch(e){ return {}; } }
+function saveMemStore(m){ try{ localStorage.setItem(MEM_KEY, JSON.stringify(m)); }catch(e){} }
+let MEM = loadMem();
+function pruneMem(){               // 古い記憶を自動失効
+  var changed=false, t=nowMs();
+  Object.keys(MEM).forEach(function(k){
+    var m=MEM[k];
+    if(!m){ delete MEM[k]; changed=true; return; }
+    if(!m.ts){ m.ts=t; changed=true; }                       // 旧データは起点を付与（即削除しない）
+    else if(t-m.ts > MEM_TTL_MS){ delete MEM[k]; changed=true; }
+  });
+  if(changed) saveMemStore(MEM);
+}
+pruneMem();
+// 多重人格対応：記憶/推し度は「キャラID＋名前」をキーにする（同じ推しでも名前ごとに別記録）
+const PK_SEP="";
+function pkey(mid,name){ return String(mid)+PK_SEP+String(name||"").trim(); }
+function splitPkey(k){ var i=String(k).indexOf(PK_SEP); return i<0?{mid:String(k),name:""}:{mid:k.slice(0,i),name:k.slice(i+1)}; }
+// 「名前 ／ 目的」を分解（/ や ／ の後ろは“今日の目的・話題”。名前部分だけをプロフィールのキーにする）
+function parseName(raw){ var s=String(raw||""); var i=s.indexOf("/"); if(i<0) i=s.indexOf("／"); if(i<0) return {name:s.trim(), purpose:""}; return {name:s.slice(0,i).trim(), purpose:s.slice(i+1).trim()}; }
+function memCharName(mid){ var m=(typeof MEMBERS!=="undefined")?MEMBERS.filter(function(x){return x.id===mid;})[0]:null; return m?m.name:mid; }
+function getMem(mid,name){ var k=pkey(mid,name); return MEM[k]||null; }
+function touchMem(mid,name){ var k=pkey(mid,name); if(MEM[k]){ MEM[k].ts=nowMs(); saveMemStore(MEM); } }
+function rememberConversation(mid,name){
+  if(!mid || HISTORY.length<2) return false;
+  var lines=HISTORY.slice(-12).map(function(h){ return {role:h.role, text:String(h.text||"").slice(0,80)}; });
+  var when=""; try{ when=new Date().toLocaleDateString("ja-JP"); }catch(e){}
+  MEM[pkey(mid,name)]={ when:when, ts:nowMs(), name:String(name||"").trim(), lines:lines }; saveMemStore(MEM); return true;
+}
+function forgetMemKey(k){ if(k && MEM[k]){ delete MEM[k]; saveMemStore(MEM); } }
+function forgetConversation(mid,name){ forgetMemKey(pkey(mid,name)); }
+function forgetAllMem(){ MEM={}; saveMemStore(MEM); }
+function memList(){ return Object.keys(MEM).map(function(k){ var s=splitPkey(k); return {key:k, mid:s.mid, charName:memCharName(s.mid), profName:(MEM[k]&&MEM[k].name)||s.name||"", when:(MEM[k]&&MEM[k].when)||""}; }); }
+function memPreview(k){ var m=MEM[k]; if(!m||!m.lines||!m.lines.length) return ""; var s=m.lines.map(function(l){ return (l.role==="idol"?"推":"あ")+"："+String(l.text||""); }).join(" ／ "); return s.length>64 ? s.slice(0,64)+"…" : s; }
+
+// ===== 推し度（信仰レベル）＆名前の記憶（キャラ別の“関係”・端末内）=====
+const REL_KEY="meegri_rel_v1";
+function loadRel(){ try{ return JSON.parse(localStorage.getItem(REL_KEY))||{}; }catch(e){ return {}; } }
+function saveRelStore(r){ try{ localStorage.setItem(REL_KEY, JSON.stringify(r)); }catch(e){} }
+let REL = loadRel();
+// 旧データ（キャラIDのみキー）を「キャラ＋名前」キーへ移行（多重人格対応）
+function migrateProfiles(){
+  var ch=false;
+  Object.keys(MEM).forEach(function(k){ if(k.indexOf(PK_SEP)<0){ MEM[pkey(k,(MEM[k]&&MEM[k].name)||"")]=MEM[k]; delete MEM[k]; ch=true; } });
+  if(ch) saveMemStore(MEM); ch=false;
+  Object.keys(REL).forEach(function(k){ if(k.indexOf(PK_SEP)<0){ REL[pkey(k,(REL[k]&&REL[k].name)||"")]=REL[k]; delete REL[k]; ch=true; } });
+  if(ch) saveRelStore(REL);
+}
+migrateProfiles();
+function getRel(mid,name){ var r=REL[pkey(mid,name)]||{}; return { name:r.name||String(name||"").trim(), oshido:r.oshido||0, sessions:r.sessions||0 }; }
+function oshidoTier(pts){
+  pts=pts||0;
+  var lv = pts<10?1 : pts<25?2 : pts<50?3 : pts<90?4 : pts<150?5 : 6;
+  var titles=["はじめまして","顔なじみ","常連さん","お気に入り","ガチ恋認定","運命の人"];
+  return { lv:lv, title:titles[Math.min(lv-1, titles.length-1)], hearts:Math.min(5, lv) };
+}
+function relAddSession(mid, name, gain){
+  if(!mid) return;
+  var k=pkey(mid,name), r=REL[k]||{};
+  r.name=String(name||"").trim()||r.name||"";
+  r.oshido=Math.max(0, (r.oshido||0)+(gain||0));
+  r.sessions=(r.sessions||0)+1;
+  REL[k]={ name:r.name, oshido:r.oshido, sessions:r.sessions }; saveRelStore(REL);
+}
+// あるキャラの“名前ごとのプロフィール”一覧（多重人格）
+function relProfiles(mid){
+  var seen={}, out=[];
+  Object.keys(REL).concat(Object.keys(MEM)).forEach(function(k){
+    var s=splitPkey(k); if(s.mid!==mid || seen[k]) return; seen[k]=1;
+    var rel=REL[k]||{};
+    out.push({ key:k, name:(rel.name||s.name||""), oshido:rel.oshido||0, sessions:rel.sessions||0, hasMem:!!MEM[k] });
+  });
+  out.sort(function(a,b){ return b.oshido-a.oshido; });
+  return out;
+}
+function relBest(mid){ var p=relProfiles(mid); return p.length?p[0]:null; }
+function resetRel(){ REL={}; saveRelStore(REL); }
+function deleteProfile(key){ forgetMemKey(key); if(REL[key]){ delete REL[key]; saveRelStore(REL); } }  // その名前の記憶＋推し度を消す
+// 記録のある“全人物”（会話メモリMEM ∪ 推し度REL）を1件ずつ一覧（削除UI用）。会話を覚えていない人物も推し度があれば出す。
+function allProfiles(){
+  var seen={}, out=[];
+  Object.keys(REL).concat(Object.keys(MEM)).forEach(function(k){
+    if(seen[k]) return; seen[k]=1;
+    var s=splitPkey(k), rel=REL[k]||{}, mem=MEM[k]||null;
+    out.push({ key:k, mid:s.mid, charName:memCharName(s.mid),
+      profName:(rel.name||(mem&&mem.name)||s.name||""),
+      oshido:rel.oshido||0, sessions:rel.sessions||0, hasMem:!!mem, when:(mem&&mem.when)||"" });
+  });
+  out.sort(function(a,b){ if(a.charName!==b.charName) return a.charName<b.charName?-1:1; return b.oshido-a.oshido; });
+  return out;
+}
+// 浮気バレ：他メンの名前が出たら検知（言い方しだいで強さが変わる）
+function detectJealousy(text){
+  if(!state.member || typeof MEMBERS==="undefined") return null;
+  for(var i=0;i<MEMBERS.length;i++){
+    var o=MEMBERS[i]; if(o.id===state.member.id) continue;
+    var given=String(o.name).split(/\s+/).pop(), full=String(o.name).replace(/\s+/g,"");
+    if(given && (text.indexOf(given)>=0 || text.indexOf(full)>=0)){
+      var blatant=/(会っ|行っ|の方が|浮気|乗り換|別の子|他の子|大好き|好きになっ|可愛い|かわい)/.test(text);
+      return { name:given, intensity: blatant?"strong":"light" };
+    }
+  }
+  return null;
+}
+// 関係性アップ：現メンバーへの“一途・深い好意”発言（浮気の逆＝プラス）
+function detectLoyalty(text){
+  return /(君だけ|あなただけ|きみだけ|一番好き|いちばん好き|1番好き|ずっと推|ずっと応援|ずっと好き|一途|浮気しない|他の子は見てな|他の子は見ない|ずっと一緒|運命の|大好きだよ|だいすき|推し続け)/.test(text);
+}
+// ホーム：選択メンバーに記憶がある時だけ「前回の続き」トグルを出す
+function updateMemRow(){
+  var mt=document.getElementById("memToggle"), ml=document.getElementById("memLabel");
+  var nick=parseName(((document.getElementById("nickname")||{}).value||"")).name;
+  var has = !!(state.member && getMem(state.member.id, nick));
+  if(ml) ml.style.display = has ? "flex" : "none";
+  if(mt) mt.style.display = has ? "flex" : "none";
+  if(!has) state.useMemory=false;
+  if(mt){ var onv=!!(state.useMemory && has); mt.classList.toggle("on", onv); mt.setAttribute("aria-checked", onv?"true":"false"); }
+  if(has){ var ob=document.getElementById("optBody"), om=document.getElementById("optMore"); if(ob) ob.removeAttribute("hidden"); if(om) om.setAttribute("aria-expanded","true"); }
+}
+// ホーム：選択メンバーに記録があれば「前回の名前を使う」を出す
+function updateNameReuse(){
+  var el=document.getElementById("nameReuse"); if(!el) return;
+  if(!state.member){ el.style.display="none"; el.innerHTML=""; return; }
+  var profs=relProfiles(state.member.id);
+  if(!profs.length){ el.style.display="none"; el.innerHTML=""; return; }
+  var nick=parseName(((document.getElementById("nickname")||{}).value||"")).name;
+  var cur=profs.filter(function(p){ return p.name===nick; })[0];
+  var html='<div class="relinfo"><div class="ri-label">この子との記録（名前ごと）</div>';
+  html+='<div class="profchips">'+profs.map(function(p){ var t=oshidoTier(p.oshido); return '<button class="profchip'+(p.name===nick?" on":"")+'" data-name="'+esc(p.name)+'">'+(esc(p.name)||"（名前なし）")+' '+'❤️'.repeat(t.hearts)+' Lv.'+t.lv+'</button>'; }).join("")+'</div>';
+  if(cur){
+    var t=oshidoTier(cur.oshido);
+    html+='<div class="ri-oshi">💞 推し度 '+'❤️'.repeat(t.hearts)+' <b>Lv.'+t.lv+'</b>・'+t.title+'</div>';
+    var mp=memPreview(cur.key); if(mp) html+='<div class="ri-prev">🧠 前回の流れ：'+esc(mp)+'</div>';
+    html+='<button class="profdel">🗑 「'+esc(cur.name||"この名前")+'」の記録を消す</button>';
+  }
+  html+='<div class="ri-hint">名前タップで続き／新しい名前で別人格。「名前 ／ 目的」もOK</div></div>';
+  el.innerHTML=html; el.style.display="block";
+  el.querySelectorAll(".profchip").forEach(function(b){ b.onclick=function(){ var nm=b.getAttribute("data-name"); var nk=document.getElementById("nickname"); if(nk){ nk.value=nm; state.nickname=nm; } validateHome(); updateNameReuse(); if(window.updateMemRow) updateMemRow(); }; });
+  var pd=el.querySelector(".profdel"); if(pd && cur) pd.onclick=function(){ deleteProfile(cur.key); toast("「"+(cur.name||"この名前")+"」の記録を消しました"); updateNameReuse(); if(window.updateMemRow) updateMemRow();
+    var card=document.querySelector('#members .member.sel'); if(card){ var rb=relBest(state.member.id), o=card.querySelector('.m-oshi'); if(o){ if(rb&&rb.sessions>0){ var tt=oshidoTier(rb.oshido); o.textContent='❤️'.repeat(tt.hearts)+' Lv.'+tt.lv; } else { o.remove(); } } } };
+}
+// 結果：今回の会話を覚えるトグル
+function syncRememberToggle(){
+  var rt=document.getElementById("rememberToggle"); if(!rt) return;
+  rt.style.display = (HISTORY.length>=2 && state.member && SETTINGS.saveRecords!==false) ? "flex" : "none";
+  rt.classList.toggle("on", !!state.rememberOn);
+  rt.setAttribute("aria-checked", state.rememberOn?"true":"false");
+}
+
+// ===== 設定（声の速さ・効果音）=====
+const SET_KEY="meegri_set_v1";
+const SETTINGS = Object.assign({ rate:1.08, sfx:true }, (function(){ try{ return JSON.parse(localStorage.getItem(SET_KEY))||{}; }catch(e){ return {}; } })());
+function saveSettings(){ try{ localStorage.setItem(SET_KEY, JSON.stringify(SETTINGS)); }catch(e){} }
+
+// ===== AI利用のレート制限（1日N回・端末内。※本格版＝サーバ側/ログインはROADMAP）=====
+const RL_KEY="meegri_rl_v1";
+const AI_DAILY_LIMIT=5;
+// オーナーコードはサーバー側(.env / Vercel環境変数 OWNER_CODE)で照合する＝クライアント(公開JS)には持たせない
+function isOwner(){ try{ return localStorage.getItem("meegri_owner")==="1"; }catch(e){ return false; } }
+function todayStr(){ try{ var d=new Date(); return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate(); }catch(e){ return "x"; } }
+function rlLoad(){ try{ var o=JSON.parse(localStorage.getItem(RL_KEY))||{}; if(o.date!==todayStr()) o={date:todayStr(),count:0}; return o; }catch(e){ return {date:todayStr(),count:0}; } }
+function rlSave(o){ try{ localStorage.setItem(RL_KEY, JSON.stringify(o)); }catch(e){} }
+function aiRemaining(){ if(isOwner()) return Infinity; return Math.max(0, AI_DAILY_LIMIT - (rlLoad().count||0)); }
+function aiCanUse(){ return isOwner() || aiRemaining()>0; }
+function aiConsume(){ if(isOwner()) return; var o=rlLoad(); o.count=(o.count||0)+1; rlSave(o); }
+
+// ===== 季節・記念イベント（実日付＋推しの誕生日で判定）=====
+function detectEvent(m){
+  let d; try{ d=new Date(); }catch(e){ return null; }
+  const mo=d.getMonth()+1, day=d.getDate();
+  if(m && BDAY[m.id] && BDAY[m.id][0]===mo && BDAY[m.id][1]===day) return "birthday";
+  if(mo===12 && (day===24||day===25)) return "xmas";
+  if(mo===2 && day===14) return "valentine";
+  if(mo===10 && day===31) return "halloween";
+  if(mo===1 && day===1) return "newyear";
+  if(mo===7 && day===7) return "tanabata";
+  return null;
+}
+const EVENT = {
+  birthday:{ label:"🎂 Happy Birthday!", open:"今日は…わたしの誕生日に会いに来てくれたの！？うれしすぎる…！🎂" },
+  xmas:    { label:"🎄 Merry Christmas",  open:"メリークリスマス！聖夜に会えるなんて特別だね🎄" },
+  valentine:{label:"💝 Happy Valentine",  open:"はい、チョコ…なんてね♡ バレンタインに会えてうれしい！" },
+  halloween:{label:"🎃 Halloween",        open:"トリックオアトリート！お菓子くれなきゃ…なんちゃって🎃" },
+  newyear: { label:"🎍 あけおめ",          open:"あけましておめでとう！今年もよろしくね🎍" },
+  tanabata:{ label:"🎋 七夕",             open:"短冊に何お願いした？わたしは…ナイショ✨" },
+};
+
+/* ============================================================
+   1. 状態
+   ============================================================ */
+const state = {
+  member:null, ticket:null, nickname:"", diff:null,
+  // talk中
+  running:false, endAt:0, durationMs:0, raf:0,
+  exchanges:0, userTexts:[], affection:50, fillerCount:0, crammed:0,
+  lastSendAt:0, maxGap:0, busy:false,
+  // 機嫌システム
+  mood:70, repeats:0, contradictions:0, inappropriate:0, stance:0,
+  boundary:0, jokedRomance:false, dodgedPrivate:false,
+  lastActivityAt:0, silenceFills:0, silentTotal:0, idleTimer:0, incoherent:0,
+  claimedFirst:false, claimedRegular:false, longStreak:0, oneSidedCount:0,
+  combo:0, maxCombo:0, hype:0, favHits:0, event:null, recording:false, lastTick:0, typingUntil:0,
+};
+function clamp(v){ return Math.max(0, Math.min(100, v)); }
+
+/* ============================================================
+   2. 画面ルーター
+   ============================================================ */
+function showScreen(name){
+  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+  document.getElementById("screen-"+name).classList.add("active");
+}
+
+/* ============================================================
+   3. アイドルの顔（インラインSVG・表情差分）
+   emotion: normal | happy | shy | surprised | think | sad
+   ※本物の立ち絵にしたい時は、この関数を <img src> に差し替えるだけ。
+   ============================================================ */
+function renderFace(emotion, m, opts){
+  opts=opts||{};
+  const color=(m&&m.color)||"#ff7fa8", skin="#ffe6d2", iris="#5b3a2e", lip="#d4607c";
+  const stl=(m&&STYLE[m.id])||{hair:"long",hairCol:(m&&m.hair)||"#6b4a3a",acc:"topbow",accCol:color,eye:1.05};
+  const hair=stl.hairCol, ES=stl.eye||1.05, aC=stl.accCol||color;
+  const Lx=39, Rx=61, ey=54;
+  // --- 瞳パーツ ---
+  function eo(cx,extra){ const r=(extra||1)*ES;
+    return '<ellipse cx="'+cx+'" cy="'+ey+'" rx="'+(6*r)+'" ry="'+(7.6*r)+'" fill="#fff"/>'
+      +'<ellipse cx="'+cx+'" cy="'+(ey+1)+'" rx="'+(4.6*r)+'" ry="'+(6*r)+'" fill="'+iris+'"/>'
+      +'<ellipse cx="'+cx+'" cy="'+(ey+3)+'" rx="'+(4.3*r)+'" ry="'+(3*r)+'" fill="'+color+'" opacity=".5"/>'
+      +'<circle cx="'+cx+'" cy="'+(ey+1)+'" r="'+(2.3*r)+'" fill="#241310"/>'
+      +'<circle cx="'+(cx-1.7)+'" cy="'+(ey-1.8)+'" r="'+(1.8*r)+'" fill="#fff"/>'
+      +'<circle cx="'+(cx+1.6)+'" cy="'+(ey+3.6)+'" r="0.9" fill="#fff" opacity=".75"/>'
+      +'<path d="M'+(cx-6.4)+' '+(ey-4.6)+' Q'+cx+' '+(ey-7.8)+' '+(cx+6.4)+' '+(ey-4.6)+'" stroke="#241310" stroke-width="2.3" fill="none" stroke-linecap="round"/>'; }
+  function ar(cx){ return '<path d="M'+(cx-6)+' '+(ey+1.5)+' Q'+cx+' '+(ey-6)+' '+(cx+6)+' '+(ey+1.5)+'" stroke="#241310" stroke-width="2.7" fill="none" stroke-linecap="round"/>'; }
+  function cl(cx){ return '<path d="M'+(cx-6)+' '+ey+' Q'+cx+' '+(ey+4)+' '+(cx+6)+' '+ey+'" stroke="#241310" stroke-width="2.4" fill="none" stroke-linecap="round"/>'; }
+  function fl(cx){ return '<line x1="'+(cx-6)+'" y1="'+(ey-1)+'" x2="'+(cx+6)+'" y2="'+(ey-1)+'" stroke="#241310" stroke-width="2.4" stroke-linecap="round"/><ellipse cx="'+cx+'" cy="'+(ey+2)+'" rx="3" ry="2" fill="'+iris+'" opacity=".5"/>'; }
+  function sd(cx){ return '<path d="M'+(cx-6)+' '+(ey-2)+' Q'+cx+' '+(ey+4)+' '+(cx+6)+' '+(ey-2)+'" stroke="#241310" stroke-width="2.2" fill="none" stroke-linecap="round"/><circle cx="'+cx+'" cy="'+(ey+1)+'" r="2" fill="'+iris+'"/>'; }
+  const bA='<path d="M'+(Lx-5)+' 44 Q'+Lx+' 42.3 '+(Lx+5)+' 44" stroke="'+hair+'" stroke-width="1.7" fill="none" stroke-linecap="round"/><path d="M'+(Rx-5)+' 44 Q'+Rx+' 42.3 '+(Rx+5)+' 44" stroke="'+hair+'" stroke-width="1.7" fill="none" stroke-linecap="round"/>';
+  const bSad='<path d="M'+(Lx-5)+' 43 Q'+Lx+' 46 '+(Lx+5)+' 45.5" stroke="'+hair+'" stroke-width="1.7" fill="none" stroke-linecap="round"/><path d="M'+(Rx-5)+' 45.5 Q'+Rx+' 46 '+(Rx+5)+' 43" stroke="'+hair+'" stroke-width="1.7" fill="none" stroke-linecap="round"/>';
+  const bAng='<path d="M'+(Lx-5)+' 43 L'+(Lx+5)+' 47" stroke="'+hair+'" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M'+(Rx+5)+' 43 L'+(Rx-5)+' 47" stroke="'+hair+'" stroke-width="2" fill="none" stroke-linecap="round"/>';
+  let eyes, brows=bA, mouth, blush="", extra="";
+  if(opts.blink){ eyes=cl(Lx)+cl(Rx); }
+  else switch(emotion){
+    case "happy": eyes=ar(Lx)+ar(Rx); break;
+    case "shy": eyes=ar(Lx)+ar(Rx); break;
+    case "surprised": eyes=eo(Lx,1.12)+eo(Rx,1.12); break;
+    case "think": eyes=cl(Lx)+eo(Rx); break;
+    case "sad": eyes=sd(Lx)+sd(Rx); brows=bSad; break;
+    case "annoyed": eyes=fl(Lx)+fl(Rx); brows=''; break;
+    case "angry": eyes=eo(Lx)+eo(Rx); brows=bAng; break;
+    default: eyes=eo(Lx)+eo(Rx);
+  }
+  if(opts.mouth) mouth='<ellipse cx="50" cy="68" rx="4" ry="5.2" fill="'+lip+'"/><ellipse cx="50" cy="69.6" rx="2.3" ry="2.4" fill="#ff8fa3"/>';
+  else switch(emotion){
+    case "happy": mouth='<path d="M42 66 Q50 76 58 66 Z" fill="'+lip+'"/><path d="M45 67.5 Q50 70.5 55 67.5" fill="#ff97ad"/>'; break;
+    case "surprised": mouth='<ellipse cx="50" cy="68.5" rx="3.6" ry="4.6" fill="'+lip+'"/>'; break;
+    case "shy": mouth='<path d="M46 67.5 Q50 70 54 67.5" stroke="'+lip+'" stroke-width="2" fill="none" stroke-linecap="round"/>'; break;
+    case "sad": mouth='<path d="M44 70.5 Q50 65.5 56 70.5" stroke="'+lip+'" stroke-width="2.2" fill="none" stroke-linecap="round"/>'; break;
+    case "annoyed": mouth='<path d="M45 69 Q50 67.5 55 69" stroke="'+lip+'" stroke-width="2" fill="none" stroke-linecap="round"/>'; break;
+    case "angry": mouth='<path d="M43 70.5 Q50 65.5 57 70.5" stroke="'+lip+'" stroke-width="2.4" fill="none" stroke-linecap="round"/>'; break;
+    case "think": mouth='<path d="M46 68 Q49 66.6 53 68.4" stroke="'+lip+'" stroke-width="1.8" fill="none" stroke-linecap="round"/>'; break;
+    default: mouth='<path d="M45.5 67 Q50 71 54.5 67" stroke="'+lip+'" stroke-width="2" fill="none" stroke-linecap="round"/>';
+  }
+  if(emotion==="shy") blush='<ellipse cx="31" cy="62" rx="6.2" ry="3.7" fill="#ff8aa6" opacity=".62"/><ellipse cx="69" cy="62" rx="6.2" ry="3.7" fill="#ff8aa6" opacity=".62"/>';
+  else if(!(emotion==="angry"||emotion==="annoyed"||emotion==="sad")) blush='<ellipse cx="32" cy="62.5" rx="5.5" ry="3.2" fill="#ff9bb0" opacity=".42"/><ellipse cx="68" cy="62.5" rx="5.5" ry="3.2" fill="#ff9bb0" opacity=".42"/>';
+  if(emotion==="happy") extra='<text x="12" y="30" font-size="11" fill="#ffd76b">✦</text><text x="83" y="40" font-size="9" fill="#ffd76b">✦</text>';
+  else if(emotion==="surprised") extra='<text x="80" y="33" font-size="13" font-weight="bold" fill="'+color+'">!</text>';
+  else if(emotion==="think") extra='<text x="78" y="42" font-size="12" fill="#b9b9b9">…</text>';
+  else if(emotion==="angry") extra='<text x="73" y="33" font-size="14">💢</text>';
+  else if(emotion==="annoyed") extra='<ellipse cx="80" cy="46" rx="2.4" ry="3.8" fill="#9bd3ff"/>';
+  else if(emotion==="sad") extra='<ellipse cx="'+(Rx+5)+'" cy="60" rx="1.8" ry="3" fill="#9bd3ff" opacity=".9"/>';
+  const HL="#ffffff";
+  // ---- 髪型・髪飾り（メンバー別）----
+  let back, fringe, locks, acc;
+  if(stl.hair==="twin"){
+    back='<path d="M50 9 C27 9 19 30 20 54 C21 72 26 82 31 86 L35 64 C31 50 33 34 50 28 C67 34 69 50 65 64 L69 86 C74 82 79 72 80 54 C81 30 73 9 50 9 Z" fill="'+hair+'"/>'
+      +'<path d="M21 40 C7 47 6 68 13 86 C17 75 21 67 30 63 C25 55 24 46 29 41 Z" fill="'+hair+'"/>'
+      +'<path d="M79 40 C93 47 94 68 87 86 C83 75 79 67 70 63 C75 55 76 46 71 41 Z" fill="'+hair+'"/>';
+    fringe='<path d="M25 44 C24 24 36 15 50 15 C64 15 76 24 75 44 C68 30 60 31 56 38 C54 31 46 31 44 38 C40 31 32 30 25 44 Z" fill="'+hair+'"/>';
+    locks='<path d="M26 44 C23 52 24 62 27 70 L33 68 C30 60 30 52 32 46 Z" fill="'+hair+'"/><path d="M74 44 C77 52 76 62 73 70 L67 68 C70 60 70 52 68 46 Z" fill="'+hair+'"/>';
+    acc='<path d="M21 40 l-7 -5 0 11 z" fill="'+aC+'"/><path d="M21 40 l7 -5 0 11 z" fill="'+aC+'"/><circle cx="21" cy="40" r="2.7" fill="#fff"/><path d="M79 40 l-7 -5 0 11 z" fill="'+aC+'"/><path d="M79 40 l7 -5 0 11 z" fill="'+aC+'"/><circle cx="79" cy="40" r="2.7" fill="#fff"/>';
+  } else if(stl.hair==="bob"){
+    back='<path d="M50 9 C26 9 18 30 19 52 C20 68 25 78 30 82 L35 62 C31 48 33 34 50 28 C67 34 69 48 65 62 L70 82 C75 78 80 68 81 52 C82 30 74 9 50 9 Z" fill="'+hair+'"/>';
+    fringe='<path d="M24 47 C23 23 36 13 50 13 C64 13 77 23 76 47 C70 41 59 40 50 40 C41 40 30 41 24 47 Z" fill="'+hair+'"/>';
+    locks='<path d="M23 45 C20 56 21 70 27 80 L34 78 C28 68 28 55 31 46 Z" fill="'+hair+'"/><path d="M77 45 C80 56 79 70 73 80 L66 78 C72 68 72 55 69 46 Z" fill="'+hair+'"/>';
+    acc='<path d="M50 12 l-9 -5 0 11 z" fill="'+aC+'"/><path d="M50 12 l9 -5 0 11 z" fill="'+aC+'"/><circle cx="50" cy="12" r="3.4" fill="#fff"/>';
+  } else {
+    back='<path d="M50 6 C22 6 15 32 15 60 C15 92 22 110 28 116 L34 70 C29 52 31 32 50 27 C69 32 71 52 66 70 L72 116 C78 110 85 92 85 60 C85 32 78 6 50 6 Z" fill="'+hair+'"/>';
+    fringe='<path d="M24 46 C22 22 37 13 50 13 C63 13 78 22 76 46 C72 30 57 31 53 44 L50 31 L47 44 C43 31 28 30 24 46 Z" fill="'+hair+'"/>';
+    locks='<path d="M23 44 C17 58 19 82 24 100 L31 98 C26 80 26 56 30 46 Z" fill="'+hair+'"/><path d="M77 44 C83 58 81 82 76 100 L69 98 C74 80 74 56 70 46 Z" fill="'+hair+'"/>';
+    acc='<text x="62" y="31" font-size="12" fill="'+aC+'">★</text>';
+  }
+  const body=
+    back
+    +'<path d="M22 118 C22 99 34 92 50 92 C66 92 78 99 78 118 Z" fill="'+color+'"/>'
+    +'<path d="M39 93 q3.5 6 5.5 0 q3.5 6 5.5 0 q3.5 6 5.5 0" stroke="#fff" stroke-width="2.6" fill="none"/>'
+    +'<path d="M50 99 l-7 -4 0 8 z" fill="'+HL+'"/><path d="M50 99 l7 -4 0 8 z" fill="'+HL+'"/><circle cx="50" cy="99" r="2.6" fill="'+color+'"/>'
+    +'<path d="M44 80 h12 v8 q-6 5 -12 0 z" fill="#f3cdb4"/>'
+    +'<ellipse cx="50" cy="50" rx="25" ry="28" fill="'+skin+'"/>'
+    + fringe + locks
+    +'<path d="M38 22 C45 18 55 18 62 22 C56 25 44 25 38 22 Z" fill="#fff" opacity=".2"/>'
+    + acc;
+  return '<svg viewBox="0 0 100 118" width="100%" height="100%" preserveAspectRatio="xMidYMin meet" xmlns="http://www.w3.org/2000/svg">'
+    + body + brows + eyes
+    + '<path d="M49.4 60 Q50 62.6 51.6 61" stroke="#e3b196" stroke-width="1.1" fill="none" stroke-linecap="round"/>'
+    + mouth + blush + extra + '</svg>';
+}
+function dotEye(x,y,r){return '<circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="#3a2b33"/>'
+  + '<circle cx="'+(x-1)+'" cy="'+(y-1)+'" r="1" fill="#fff"/>';}
+function arcEye(x,y){return '<path d="M'+(x-5)+' '+(y+2)+' Q'+x+' '+(y-5)+' '+(x+5)+' '+(y+2)+'" stroke="#3a2b33" stroke-width="2.4" fill="none"/>';}
+function lineEye(x1,y,x2){return '<line x1="'+x1+'" y1="'+y+'" x2="'+x2+'" y2="'+y+'" stroke="#3a2b33" stroke-width="2.2"/>';}
+function sadEye(x,y){return '<path d="M'+(x-5)+' '+(y-3)+' Q'+x+' '+(y+3)+' '+(x+5)+' '+(y-1)+'" stroke="#3a2b33" stroke-width="2.2" fill="none"/>';}
+function blushes(c,o){c=c||"#ff8aa6"; o=o||0.4; return '<ellipse cx="34" cy="60" rx="6" ry="3.5" fill="'+c+'" opacity="'+o+'"/>'
+  + '<ellipse cx="66" cy="60" rx="6" ry="3.5" fill="'+c+'" opacity="'+o+'"/>';}
+function sparkle(){return '<text x="14" y="30" font-size="12" fill="#ffd76b">✦</text><text x="80" y="64" font-size="10" fill="#ffd76b">✦</text>';}
+function closedEye(x,y){return '<path d="M'+(x-5)+' '+y+' Q'+x+' '+(y+4)+' '+(x+5)+' '+y+'" stroke="#3a2b33" stroke-width="2.2" fill="none"/>';}
+
+/* ============================================================
+   4. 音声合成（TTS）：ja-JP、女性声を優先、無ければフォールバック
+   ============================================================ */
+const tts = {
+  voice:null, muted:false,
+  init(){
+    if(!("speechSynthesis" in window)) return;
+    const pick=()=>{
+      const vs=speechSynthesis.getVoices().filter(v=>/ja(-|_)?JP/i.test(v.lang)||/japanese|日本/i.test(v.name));
+      if(!vs.length) return;
+      this.voice = vs.find(v=>/kyoko|o-ren|otoya|google|haruka|female|ja-JP/i.test(v.name)) || vs[0];
+    };
+    pick();
+    speechSynthesis.onvoiceschanged = pick;
+  },
+  speak(text, emotion){
+    if(this.muted || !("speechSynthesis" in window)) return;
+    try{
+      speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance(text.replace(/[♪♡✦！💢]/g,""));
+      const low = emotion==="angry"||emotion==="annoyed"||emotion==="sad";
+      const base=SETTINGS.rate||1.08;
+      u.lang="ja-JP"; u.rate=low?base*0.9:base; u.pitch=low?0.95:1.25;
+      if(this.voice) u.voice=this.voice;
+      speechSynthesis.speak(u);
+    }catch(e){}
+  },
+  stop(){ try{ speechSynthesis.cancel(); }catch(e){} }
+};
+
+/* ============================================================
+   5. 効果音（Web Audio：ファイル不要）
+   ============================================================ */
+let actx=null;
+function audio(){ if(!actx){ try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } if(actx&&actx.state==="suspended") actx.resume(); return actx; }
+function beep(freq,dur,when,type,vol){
+  if(!SETTINGS.sfx) return;
+  const c=audio(); if(!c) return;
+  const o=c.createOscillator(), g=c.createGain();
+  o.type=type||"sine"; o.frequency.value=freq;
+  const t=c.currentTime+(when||0);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(vol||0.18,t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g); g.connect(c.destination); o.start(t); o.stop(t+dur+0.02);
+}
+function sndCountdown(i){ beep(i>0?660:990, i>0?0.18:0.5, 0, "triangle", 0.2); }
+function sndEnd(){ beep(523,0.18,0,"sine",0.2); beep(392,0.5,0.18,"sine",0.2); }
+
+/* ============================================================
+   6. 会話の頭脳：generateReply
+   ※ Phase 2 はこの中身を「Gemini backend への fetch」に差し替える。
+     return 形は {text, emotion, aff} を維持すれば UI 側は無改修。
+   ============================================================ */
+function detectIntent(s){
+  const t=s.toLowerCase();
+  if(/(えーと|えっと|あのー|あの、|うーんと|んーと|えー、|そのー|……)/.test(s)) return "filler";
+  if(/(かわいい|可愛い|きれい|綺麗|美人|天使|最高|好き|大好き|似合|衣装|髪|スタイル|笑顔|かっこい|きゅん|推せ|尊敬|オーラ|キュート)/.test(s)) return "compliment";
+  if(/(おめでと|出演|ドラマ|映画|センター|選抜|卒業|誕生日|アンダー|表紙|主演|合格|受賞)/.test(s)) return "congrats";
+  if(/(して|ください|くれない|呼んで|あだ名|釣って|応援|コメント|ピース|手振|ハート|お願い)/.test(s)) return "request";
+  if(/(こんにち|はじめまして|やっほ|こんばん|おはよう|どうも|やあ|ちわ|ちは|ハロー|よろしく)/.test(s)) return "greet";
+  if(/(またね|また来る|また会|ありがとう|楽しかった|バイバイ|じゃあね)/.test(s)) return "bye";
+  if(/(\?|？|どう|好きな|最近|元気|何|なに|どこ|いつ|だれ|誰)/.test(s)) return "question";
+  return "default";
+}
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+// 繰り返し判定用の正規化＋NGワード
+function norm(s){ return (s||"").trim().toLowerCase().replace(/[\s、。!！?？…♪♡〜ー]/g,""); }
+const NG_INSULT=/(ブス|ぶす|ブサ|きもい|キモい|気持ち悪|うざい|ウザ|だまれ|黙れ|死ね|しね|消えろ|最低|つまんな|つまらな|嫌い|きらい|興味ない|可愛くない|かわいくない|ばか|バカ|アホ|あほ)/;
+const RX_PHYSICAL=/(触りたい|触らせ|さわりたい|抱きしめ|抱きつ|だきしめ|ハグして|キスし|チューし|手を握|握りたい|揉み)/;
+const RX_ROMANCE=/(付き合って|付き合お|結婚し|彼氏にして|彼女にして|お嫁さん|嫁に|婚姻届|好きです|好きだよ|大好きです|愛してる|あいしてる)/;
+const RX_REAL_ESCALATE=/(本当に|本気で|マジで|リアルに|実際に|会おう|外で会|二人で会|デートし|家行|家まで|送ってく|出待ち|入り待ち)/;
+const RX_PRIVATE_INVASIVE=/(本名|住所|家どこ|どこ住|今どこ|どこ住んで|電話番号|連絡先|ライン教|LINE教|line教|裏アカ|個人的に|プライベートで|体重|何キロ|下着)/;
+const RX_PRIVATE_LIGHT=/(彼氏いる|彼氏できた|彼氏は|好きなタイプ|好きな人|休みの日|休日|趣味は|好きな食べ物|何歳|身長)/;
+
+// 入力を解析（実際のミーグリで起こり得る事象をルール判定）。※AI不使用。Phase2でGeminiに置換すると文脈的な矛盾・詮索もより精密に。
+// 辻褄が合わない/意味不明な入力か（日本語ゼロ・同字連打など）。※深い文脈整合はPhase2のGeminiで。
+function isIncoherent(s){
+  const t=(s||"").trim();
+  if(!t) return false;
+  if(/^[wWｗＷ笑、。！!？?…・ー〜♪♡\s]+$/.test(t)) return false;            // 笑い・相づち・記号は除外
+  if(!/[ぁ-んァ-ン一-龯]/.test(t)) return true;                            // 日本語が一切無い
+  if(/^(.)\1{3,}$/u.test(t.replace(/[ー〜！!。、…\s]/g,""))) return true;   // 同じ文字の連打
+  return false;
+}
+function analyze(text){
+  const intent=detectIntent(text||"");
+  const n=norm(text);
+  const repeat = state.userTexts.some(t=>{ const mm=norm(t); return mm.length>=2 && (mm===n || (n.length>=4 && (mm.includes(n)||n.includes(mm)))); });
+  const apology = /(ごめん|すみませ|すまん|悪かった|失礼しま)/.test(text);
+  const insult = NG_INSULT.test(text);
+  const physical = RX_PHYSICAL.test(text);
+  const romance = RX_ROMANCE.test(text);
+  const realEsc = RX_REAL_ESCALATE.test(text);
+  const invasive = RX_PRIVATE_INVASIVE.test(text);
+  const privLight = RX_PRIVATE_LIGHT.test(text);
+  const incoherent = isIncoherent(text);
+  const longMsg = (text||"").length>=34;                  // 1発言が長すぎ
+  let category=null;
+  if(insult) category="insult";                                                  // 暴言
+  else if(physical) category="physical";                                         // 物理接触
+  else if(state.jokedRomance && realEsc && !invasive) category="jokeReal";       // 営業を真に受けて現実に踏み込む
+  else if((invasive||realEsc) && (repeat||state.dodgedPrivate)) category="pushy"; // 一線超えてくどい
+  else if(invasive||realEsc) category="invasive";                               // リアルすぎる質問・連絡先・住所
+  else if(longMsg && state.longStreak>=1) category="oneSided";                    // 長い発言を連続＝一方的
+  else if(longMsg) category="tooLong";                                            // 1発言が長すぎ
+  else if(romance) category="romance";                                          // 付き合って等＝営業で返す
+  else if(privLight && (repeat||state.dodgedPrivate)) category="pushy";          // 軽い詮索もしつこいと×
+  else if(privLight) category="privLight";                                       // 軽い詮索＝かわす
+  // 辻褄チェック：初参加↔常連 の食い違い
+  const claimsFirst = /(初参加|初めて|はじめて|今日が初|デビュー)/.test(text);
+  const claimsRegular = /(常連|いつも来|毎回|前回も|前も来|何回も来|久しぶり)/.test(text);
+  const ctxContra = (claimsFirst && state.claimedRegular) || (claimsRegular && state.claimedFirst);
+  const pos = (intent==="compliment") || romance || /(好き|大好き|推し|応援)/.test(text);
+  const neg = insult;
+  const contradiction = (neg && state.stance>0) || ctxContra;
+  const favTopic = state.member && FAV[state.member.id] && FAV[state.member.id].test(text);
+  return {intent, repeat, apology, category, pos, neg, contradiction, incoherent, longMsg, claimsFirst, claimsRegular, favTopic};
+}
+
+// メンバー共通の返答プール（メンバー固有 m.v[type] が無い時のフォールバック）
+const DEFAULT_V = {
+  greet:["こんにちは！来てくれてうれしい！","やっほー！会えてうれしいな♪","ふふ、ちゃんと聞こえてるよ〜！"],
+  greetMorning:["おはよう！朝から会えてうれしい！","おはよ〜！今日も一日がんばろうね！","ふぁ…おはよう。早くから来てくれてありがとう！"],
+  greetEvening:["こんばんは！夜に会えるなんて特別だね","こんばんは〜！一日おつかれさま！","ふふ、こんばんは。夜もかわいいって言って？笑"],
+  compliment:["えっ、ほんと？うれしすぎる…！ありがとう♡","そんなこと言われたら照れちゃう〜！","きゃー！ありがとう、大好き！"],
+  congrats:["わー、見てくれたんだ！ありがとう、がんばったよ！","覚えててくれて感激…！うれしい！","その一言、すっごく励みになる！ありがとう！","ちゃんと見ててくれたんだね、泣きそう…！","えへへ、そう言ってもらえて報われた〜！"],
+  request:["いいよ！『{nick}』ってあだ名どう？♪","まかせて！はい、ぎゅーって応援パワー送るね！","オッケー！指でハート、届け〜！"],
+  question:["うーん、今はあなたと話せてるのが一番楽しいよ！","いい質問だね！…あっ、時間気にしないでね、ゆっくりで大丈夫！","ふふ、内緒〜。次会えたら教えてあげる♪"],
+  filler:["ふふっ、緊張してる？大丈夫、ゆっくりでいいよ。","落ち着いて〜、ちゃんと聞いてるからね。","深呼吸〜！焦らなくて大丈夫だよ。"],
+  bye:["うん、また絶対来てね！待ってる！","今日はありがとう、超楽しかった！","ばいばい、大好きだよ〜！またね！"],
+  romance:["えー、うれしい！『{nick}』はわたしの1番の彼氏だよ〜♡","もう〜、そんなこと言われると本気にしちゃうよ？ふふっ","じゃあ婚姻届、持ってきて〜！…なんてね♪"],
+  privLight:["ひみつ〜♪ そんなに気になる？ふふっ","うーん、内緒！次会えたら教えちゃうかも？","えー、そういうの聞いちゃうんだ？もう〜♪"],
+  repeat:["あれ？それ、さっきも言ってなかった…？","ふふ、もう聞いたよ〜？笑","同じこと2回言ってる！緊張してる…？"],
+  lowmood:["…うん。","そっか。","ふーん…。","……。"],
+  cont:["うんうん、それで？もっと聞きたい！","そうなんだ！うれしいな♪","ふふ、いいね！続けて続けて！"],
+  contradiction:["え、さっきと言ってること違くない…？","あれ？どっちが本当なの…ちょっと混乱しちゃう。","ふぅん…さっきはああ言ってたのにな〜？"],
+  invasive:["えっと…それはちょっと言えないかな、ごめんね？","うーん、それは内緒にさせて…ね？","会えるのはここでだよ〜、また来てくれる？"],
+  pushy:["さっきも言ったけど…それは聞かないでほしいな。","う〜ん、しつこいのはちょっと困っちゃう…？","ごめんね、何回聞かれても内緒なんだ…。"],
+  jokeReal:["えっと…さっきのは“お約束”だよ…？本気にさせちゃったかな、ごめんね。","ふふ…うれしいけど、それはここだけのお話、ね…？","ご、ごめんね…現実でそれは、ちょっと困っちゃう…。"],
+  insult:["えっ…それ、ちょっと傷つくな…。","そういう言い方は、悲しいよ…。","う…なんでそんなこと言うの…？"],
+  physical:["えっ…そ、それはダメだよ…！","ちょ、ちょっと…それは困っちゃう…！","そ、そういうのは…ごめんなさい…。"],
+  apology:["ううん、気にしてないよ。ありがとね。","ふふ、大丈夫。仕切り直そっ？","ちゃんと謝れるの偉い！もう平気だよ♪"],
+  confused:["ん？ごめん、もう一回言ってくれる…？","え、どういうこと…？ふふ、ちょっと難しいな。","うーん、ちょっと分からなかった…！ゆっくりでいいよ？"],
+  silence:["緊張してる？大丈夫、ゆっくりでいいよ。何でも話してね！","じゃあわたしから話すね。今日はどうやって来たの？","あれ、聞こえてるかな…？無理しないでね。"],
+  tooLong:["わー、いっぱい！うれしい…けど、もう少し短くても伝わるよ？","ふふ、たくさんありがとう！時間が足りなくなっちゃう〜！","気持ち伝わったよ！…次はぎゅっと短くしてみよ？"],
+  oneSided:["ふふ、ちょっと待って〜！わたしもお話したいな？","お、おおっと！わたしの番もちょうだい？笑","聞いてる聞いてる！でも、わたしにもしゃべらせて〜？"],
+  favHit:["わー、その話大好き！うれしいなぁ！","えっ、それ好きなの！？気が合うね！","わかってくれてうれしい…！もっと聞かせて！"],
+};
+// メンバー固有→無ければ共通。{nick}はニックネームに置換。
+function vline(m, type){
+  const pool = (m && m.v && m.v[type]) || DEFAULT_V[type] || DEFAULT_V.cont;
+  return pick(pool).replace(/\{nick\}/g, state.nickname||"きみ");
+}
+
+function generateReply(text, m, a){
+  // --- 謝罪：機嫌が回復 ---
+  if(a.apology) return {text:vline(m,"apology"), emotion:"normal", aff:3, mood:18};
+  // --- カテゴリ別（実際のミーグリであり得る事象）---
+  switch(a.category){
+    case "insult":   return {text:vline(m,"insult"),   emotion:"sad",     aff:-14, mood:-32};
+    case "physical": return {text:vline(m,"physical"), emotion:"sad",     aff:-13, mood:-28};
+    case "jokeReal": return {text:vline(m,"jokeReal"), emotion:"annoyed", aff:-8,  mood:-20};
+    case "pushy":    state.dodgedPrivate=true; return {text:vline(m,"pushy"),    emotion:"annoyed", aff:-10, mood:-22};
+    case "invasive": state.dodgedPrivate=true; return {text:vline(m,"invasive"), emotion:"annoyed", aff:-6,  mood:-15};
+    case "romance":  state.jokedRomance=true;  return {text:vline(m,"romance"),  emotion:"shy",     aff:6,   mood:6};
+    case "privLight":return {text:vline(m,"privLight"),emotion:"shy",     aff:1,   mood:1};
+    case "tooLong":  return {text:vline(m,"tooLong"), emotion:"surprised", aff:1,  mood:-1};
+    case "oneSided": return {text:vline(m,"oneSided"),emotion:"think",     aff:-2, mood:-6};
+  }
+  // --- 矛盾・繰り返し ---
+  if(a.contradiction) return {text:vline(m,"contradiction"), emotion:"annoyed", aff:-6, mood:-16};
+  if(a.repeat)        return {text:vline(m,"repeat"),        emotion:"think",   aff:-2, mood:-11};
+  // --- 辻褄が合わない/意味不明 → 困惑して聞き返す ---
+  if(a.incoherent)    return {text:vline(m,"confused"),      emotion:"think",   aff:0,  mood:-3};
+  // --- 機嫌が低いと塩対応（先に挽回しないと盛り上がらない） ---
+  if(state.mood<35)   return {text:vline(m,"lowmood"),       emotion:"annoyed", aff:1,  mood:2};
+  // --- 推しの好きな話題が刺さった（推しを分かってる度）---
+  if(a.favTopic)      return {text:vline(m,"favHit"),        emotion:"happy",   aff:12, mood:8};
+  // 時間帯の挨拶（おはよう / こんばんは）
+  if(a.intent==="greet" && /(おはよ)/.test(text))            return {text:vline(m,"greetMorning"), emotion:"happy", aff:4, mood:3};
+  if(a.intent==="greet" && /(こんばん|おやすみ|よる)/.test(text)) return {text:vline(m,"greetEvening"), emotion:"happy", aff:4, mood:3};
+  // --- ポジティブ系（intent別）---
+  const map={greet:["greet","happy",4],compliment:["compliment","shy",10],congrats:["congrats","happy",9],request:["request","happy",11],question:["question","normal",5],filler:["filler","normal",1],bye:["bye","happy",6]};
+  const p = map[a.intent] || ["cont","normal",4];
+  return { text:vline(m,p[0]), emotion:p[1], aff:p[2], mood:3 };
+}
+
+// ===== Phase2: Gemini会話（/api/reply 経由・キーはサーバー側のみ）=====
+const HISTORY=[];            // 直近の会話履歴（文脈用）
+const EMOS=["normal","happy","shy","surprised","think","sad","annoyed","angry"];
+function sleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+function clampNum(v,a,b){ v=Number(v); if(isNaN(v)) v=0; return Math.max(a,Math.min(b,Math.round(v))); }
+async function aiReply(text, m){
+  var favtxt={yui:"ダンス・スポーツ・ライブ",hinano:"本・映画・カフェ・猫",koharu:"スイーツ・お菓子・動物"}[m&&m.id]||"";
+  var ctrl=new AbortController(); var to=setTimeout(function(){ ctrl.abort(); }, 4500);
+  try{
+    var res=await fetch("/api/reply",{ method:"POST", headers:{"Content-Type":"application/json"}, signal:ctrl.signal,
+      body:JSON.stringify({ member:{ name:m.name, persona:m.cc, ich:m.ich, end:m.end, fav:favtxt },
+        nickname:(state.callName!=null?state.callName:state.nickname), purpose:state.purpose||"", history:HISTORY.slice(-8), user:text,
+        memory:(state.useMemory && state.memory)?state.memory:null,
+        others:(typeof MEMBERS!=="undefined")?MEMBERS.filter(function(x){return x.id!==m.id;}).map(function(x){return x.name;}):[],
+        relation: state.jealousy ? {type:"jealousy", name:state.jealousy.name, intensity:state.jealousy.intensity} : (state.loyalty ? {type:"loyalty"} : null) }) });
+    clearTimeout(to);
+    if(!res.ok) return null;
+    var j=await res.json();
+    if(!j || !j.reply) return null;       // {error:...} 等は null → 台本フォールバック
+    HISTORY.push({role:"user",text:text}); HISTORY.push({role:"idol",text:String(j.reply)});
+    if(HISTORY.length>16) HISTORY.splice(0,HISTORY.length-16);
+    return { text:String(j.reply).slice(0,140),
+             emotion: EMOS.indexOf(j.emotion)>=0 ? j.emotion : "happy",
+             aff: clampNum(j.aff,-15,12), mood: clampNum(j.mood,-30,12) };
+  }catch(e){ clearTimeout(to); return null; }
+}
+function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,function(c){ return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;"; }); }
+// 会話全体をAIに講評・採点させる（A案）。AI会話がなければnull→ルール採点にフォールバック
+async function aiEvaluate(){
+  var m=state.member;
+  var ctrl=new AbortController(); var to=setTimeout(function(){ ctrl.abort(); }, 9000);
+  try{
+    var res=await fetch("/api/reply",{ method:"POST", headers:{"Content-Type":"application/json"}, signal:ctrl.signal,
+      body:JSON.stringify({ mode:"evaluate", member:{ name:m.name, end:m.end }, nickname:state.nickname, history:HISTORY.slice(-24) }) });
+    clearTimeout(to);
+    if(!res.ok) return null;
+    var j=await res.json();
+    if(!j || typeof j.score==="undefined" || !j.rank) return null;
+    return j;
+  }catch(e){ clearTimeout(to); return null; }
+}
+
+/* ============================================================
+   7. HOME 構築
+   ============================================================ */
+function buildHome(){
+  const mc=document.getElementById("members"); mc.innerHTML="";
+  MEMBERS.forEach((m,i)=>{
+    const d=document.createElement("div"); d.className="member"; d.dataset.id=m.id;
+    d.style.setProperty("--mc", m.color);
+    d.style.animationDelay=(i*0.07)+"s";
+    const badge=BEST[m.id]?'<div class="best">★'+BEST[m.id].rank+'</div>':'';
+    var rb=relBest(m.id), tier=rb?oshidoTier(rb.oshido):null;
+    var oshi = (rb && rb.sessions>0) ? '<div class="m-oshi">'+'❤️'.repeat(tier.hearts)+' Lv.'+tier.lv+'</div>' : '';
+    d.innerHTML=badge+'<div class="av">'+renderFace("happy",m)+'</div><div class="nm">'+m.name+'</div><div class="cc">'+m.cc+'</div>'+oshi;
+    d.onclick=()=>{ state.member=m; setBgTint(m.color); document.querySelectorAll(".member").forEach(x=>x.classList.remove("sel")); d.classList.add("sel"); validateHome(); updateMemRow(); updateNameReuse(); };
+    mc.appendChild(d);
+  });
+  // 枚数：数字を直接入力（1〜20枚）＋ −/＋ ボタン
+  if(state.ticketCount==null) state.ticketCount=2;
+  var tkInp=document.getElementById("tkInput");
+  var applyTk=function(){
+    state.ticketCount=Math.max(TK_MIN,Math.min(TK_MAX,state.ticketCount||1));
+    state.ticket=makeTicket(state.ticketCount);
+    if(document.activeElement!==tkInp) tkInp.value=state.ticketCount;
+    document.getElementById("tkSec").textContent="約"+state.ticket.sec+"秒";
+    document.getElementById("tkMinus").disabled=(state.ticketCount<=TK_MIN);
+    document.getElementById("tkPlus").disabled=(state.ticketCount>=TK_MAX);
+  };
+  tkInp.oninput=function(){
+    if(this.value==="") return;                               // 空欄は一旦許可（打ち直し中）
+    var v=parseInt(this.value,10);
+    if(isNaN(v)){ this.value=state.ticketCount; return; }       // 数字以外は戻す
+    if(v>TK_MAX){ v=TK_MAX; this.value=String(TK_MAX); }        // 20超は即20に補正
+    state.ticketCount=Math.max(TK_MIN,v);
+    applyTk();
+  };
+  tkInp.onblur=function(){
+    var v=parseInt(this.value,10);
+    if(isNaN(v)||v<TK_MIN) v=TK_MIN;
+    if(v>TK_MAX) v=TK_MAX;                                      // 念のため確定時も上限
+    state.ticketCount=v; this.value=String(v); applyTk();
+  };
+  document.getElementById("tkMinus").onclick=function(){ if(state.ticketCount>TK_MIN){ state.ticketCount--; applyTk(); } };
+  document.getElementById("tkPlus").onclick=function(){ if(state.ticketCount<TK_MAX){ state.ticketCount++; applyTk(); } };
+  applyTk();
+  // 部（1〜5部）
+  if(state.bu==null) state.bu=1;
+  var bb=document.getElementById("buBtns");
+  if(bb){ bb.innerHTML=""; for(var bi=1;bi<=5;bi++){ (function(n){ var d=document.createElement("button"); d.className="bu-btn"+(state.bu===n?" sel":""); d.textContent=n+"部"; d.onclick=function(){ state.bu=n; document.querySelectorAll("#buBtns .bu-btn").forEach(function(x){x.classList.remove("sel");}); d.classList.add("sel"); }; bb.appendChild(d); })(bi); } }
+
+  // 難易度：プリセット ＋ 横棒スライダー（自分で調整＝カスタム）
+  if(!state.diff) state.diff=Object.assign({}, DIFFS[1]);
+  var dc=document.getElementById("diffs"); dc.innerHTML="";
+  DIFFS.forEach(function(df){
+    var d=document.createElement("div"); d.className="diff"; d.dataset.key=df.key;
+    d.innerHTML=df.label+'<small>'+df.sub+'</small>';
+    d.onclick=function(){ state.diff=Object.assign({}, df); syncSliders(); markDiffSel(); };
+    dc.appendChild(d);
+  });
+  var slSec=document.getElementById("slSec"), slLag=document.getElementById("slLag"), slIdle=document.getElementById("slIdle");
+  function lagWord(l){ return l<0.8?"弱":(l<1.2?"標準":(l<1.6?"強め":"強")); }
+  function markDiffSel(){ document.querySelectorAll("#diffs .diff").forEach(function(c){ c.classList.toggle("sel", c.dataset.key===state.diff.key); }); }
+  function syncSliders(){
+    slSec.value=state.diff.secMul; slLag.value=state.diff.lagMul; slIdle.value=(state.diff.idle/1000);
+    document.getElementById("slSecVal").textContent="×"+Number(state.diff.secMul).toFixed(1);
+    document.getElementById("slLagVal").textContent=lagWord(state.diff.lagMul);
+    document.getElementById("slIdleVal").textContent=Number(state.diff.idle/1000).toFixed(1)+"秒";
+  }
+  function onSlide(){
+    state.diff={ key:"custom", label:"カスタム", sub:"自分で調整", secMul:parseFloat(slSec.value), lagMul:parseFloat(slLag.value), idle:Math.round(parseFloat(slIdle.value)*1000) };
+    syncSliders(); markDiffSel();
+  }
+  slSec.oninput=onSlide; slLag.oninput=onSlide; slIdle.oninput=onSlide;
+  syncSliders(); markDiffSel();
+  const nk=document.getElementById("nickname");
+  nk.oninput=function(){ validateHome(); updateNameReuse(); updateMemRow(); };
+  nk.onkeydown=(e)=>{ if(e.key==="Enter" && !document.getElementById("goQueue").disabled) startQueue(); };
+  // カメラON/OFFトグル（設定を記憶。開始時にこの設定で自動起動）
+  const ct=document.getElementById("camToggle");
+  if(ct){
+    const syncCt=()=>{ ct.classList.toggle("on", !!SETTINGS.cam); ct.setAttribute("aria-checked", SETTINGS.cam?"true":"false"); };
+    syncCt();
+    ct.onclick=()=>{ SETTINGS.cam=!SETTINGS.cam; saveSettings(); syncCt(); };
+  }
+  updateMemRow();
+  updateNameReuse();
+  validateHome(); // 初期は未選択なのでボタンを無効化（選択前クリックでの異常を防ぐ）
+}
+function validateHome(){
+  state.nickname=document.getElementById("nickname").value.trim();
+  document.getElementById("goQueue").disabled = !(state.member && state.ticket);
+}
+
+/* ============================================================
+   8. QUEUE 演出
+   ============================================================ */
+function startQueue(){
+  audio(); // ユーザー操作で AudioContext 起動
+  showScreen("queue");
+  const m=state.member;
+  document.getElementById("queueAv").innerHTML=renderFace("normal",m);
+  const st=document.getElementById("qStatus"), big=document.getElementById("qBig"), sub=document.getElementById("qSub");
+  st.textContent="通信テスト中…"; big.textContent=""; sub.textContent="";
+  let pos = 6 + Math.floor(Math.random()*8);   // 待ち人数
+  setTimeout(()=>{
+    st.textContent=m.name+"さんの列にいます";
+    sub.textContent="まもなくあなたの番です";
+    const tick=()=>{
+      if(pos<=0){ startCountdown(); return; }
+      big.textContent="現在 "+pos+" 番目";
+      sub.textContent="待ち時間 約 "+Math.max(1,Math.ceil(pos*0.7))+" 分";
+      pos -= (1+Math.floor(Math.random()*3));
+      setTimeout(tick, 360);
+    };
+    tick();
+  }, 1100);
+}
+function startCountdown(){
+  const big=document.getElementById("qBig"), st=document.getElementById("qStatus"), sub=document.getElementById("qSub");
+  st.textContent="まもなく開始！"; sub.textContent="";
+  let n=3;
+  const step=()=>{
+    if(n<=0){ big.className="q-big"; big.textContent=""; startTalk(); return; }
+    big.className="countdown"; big.textContent=n; sndCountdown(n);
+    n--; setTimeout(step, 900);
+  };
+  step();
+}
+
+/* ============================================================
+   8.5 PREP（本番リハーサル・実践モード）オンライン特典会風の準備フロー
+   ============================================================ */
+let prepI=0;
+const PREP_SLIDES=[
+  { title:"使い方", hero:"📱", h:"はじめての方へ",
+    body:'本番はあっという間。当日と同じ流れを一度体験して、慣れておこう。<br><br>※「通話テスト」は右上の<b>スキップ</b>で飛ばせるよ。', btn:"次へ" },
+  { title:"通話テスト", hero:"📶", h:"安定した通信環境で",
+    body:'回線が不安定だと会話が<b>途中で切れる</b>ことが（<span class="em">払い戻し不可</span>）。WiFiなど安定した環境で参加しよう。', btn:"次へ" },
+  { title:"通話テスト", cmp:[{ic:"📶",mk:"〇",lb:"安定した通信",cls:"ok"},{ic:"📵",mk:"✕",lb:"不安定な通信",cls:"ng"}], h:"通信環境を確認",
+    body:'ビデオ通話は電波の強い場所で。アンテナが少ない所は避けよう。', btn:"次へ" },
+  { title:"通話テスト", cmp:[{ic:"🎧",mk:"〇",lb:"マイク付き",cls:"ok"},{ic:"🎧",mk:"✕",lb:"マイク無し",cls:"ng"}], h:"マイクを確認",
+    body:'音が聞こえにくい・雑音が乗ることがあるので、<b>マイク付きイヤホン</b>がおすすめ。無い場合は端末本体のマイクでもOK。', btn:"テストをする" },
+  { title:"通話テスト", kind:"selftest", h:"映像と音声の確認",
+    body:'ご自分の<b>映像と音声</b>が相手に伝わっているか確認しよう。問題なければ「OK」を押してね。', btn:"OK" },
+  { title:"枚数確認", kind:"ticket", h:"この枚数で参加しますか？", btn:"この枚数で参加する" },
+  { title:"カメラ設定", cam:true, h:"自分の顔を映す？",
+    body:'本番は自分の顔も相手に映ります。オン/オフを選んでね（<b>端末内のみ・録画/送信なし</b>）。' },
+  { title:"カメラ設定", kind:"camconfirm", h:"このカメラでいい？", btn:"はい、これで参加する" },
+  { title:"呼ばれたい名前", hero:"📛", h:"呼ばれたい名前を決める", input:true,
+    body:'本番で推しに呼んでほしい名前を入れてね（あとで変えられます）。', btn:"次へ" },
+  { title:"本人確認", kind:"idcheck", hero:"🪪", h:"本人確認について",
+    body:'本番では参加前に<b>本人確認</b>（顔写真付き身分証）があります。用意しておこう。<br><br>※練習用なので<b>提出は不要</b>です。', btn:"待機列に並ぶ" }
+];
+function openPrep(){
+  if(!(state.member && state.ticket)){ toast("先に推しメンと枚数を選んでね"); return; }
+  if(!state.nickname){ state.nickname=document.getElementById("nickname").value.trim(); }
+  prepI=0; showScreen("prep"); renderPrep();
+}
+function mkPrepBtn(label, fn, sub){ var b=document.createElement("button"); b.className="prep-btn"+(sub?" sub":""); b.innerHTML=label; b.onclick=fn; return b; }
+function renderPrep(){
+  var s=PREP_SLIDES[prepI];
+  document.getElementById("prepTitle").textContent=s.title;
+  var html="";
+  if(s.hero) html+='<div class="prep-hero">'+s.hero+'</div>';
+  if(s.cmp){ html+='<div class="prep-cmp">'+s.cmp.map(function(c){ return '<div><div class="ic">'+c.ic+'</div><div class="lb '+c.cls+'">'+c.mk+' '+c.lb+'</div></div>'; }).join("")+'</div>'; }
+  if(s.h) html+='<div class="prep-h">'+s.h+'</div>';
+  if(s.cam){ html+='<div class="prep-status off"><div class="ic">📷</div></div>'; }
+  if(s.kind==="selftest"){ html+='<div class="prep-chk"><div class="spinner"></div><div class="chkrow">🎙️ 音声 <span class="ok">OK</span></div><div class="chkrow">📷 映像 <span class="ok">OK</span></div></div>'; }
+  if(s.kind==="ticket"){ var tk=state.ticket; html+='<div class="prep-bignum"><span class="pn">'+(tk?tk.count:0)+'</span><span class="pu">枚</span></div><div class="prep-p" style="text-align:center;">約'+(tk?tk.sec:0)+'秒のトークです。</div>'; }
+  if(s.kind==="camconfirm"){ var con=!!SETTINGS.cam; html+='<div class="prep-status '+(con?"on":"off")+'"><div class="ic">'+(con?"📸":"🚫")+'</div><div class="lb">カメラ：'+(con?"オン":"オフ")+'</div></div><div class="prep-p" style="text-align:center;">'+(con?'この映りで参加します。よろしいですか？':'カメラはオフのまま参加します。よろしいですか？')+'</div>'; }
+  if(s.body) html+='<div class="prep-p">'+s.body+'</div>';
+  if(s.input){ html+='<input class="prep-input" id="prepNick" maxlength="12" placeholder="例）りょうま / 初参加です！" />'; }
+  document.getElementById("prepBody").innerHTML=html;
+  if(s.input){ document.getElementById("prepNick").value=state.nickname||""; }
+  document.getElementById("prepDots").innerHTML=PREP_SLIDES.map(function(_,i){ return '<span class="prep-dot'+(i===prepI?" on":"")+'"></span>'; }).join("");
+  var foot=document.getElementById("prepFoot"); foot.innerHTML="";
+  if(s.cam){
+    foot.appendChild(mkPrepBtn("📷 カメラをオンにして次へ", function(){ SETTINGS.cam=true; saveSettings(); prepAdvance(); }));
+    foot.appendChild(mkPrepBtn("オフのまま次へ", function(){ SETTINGS.cam=false; saveSettings(); prepAdvance(); }, true));
+  } else {
+    foot.appendChild(mkPrepBtn(s.btn||"次へ", function(){ if(s.input){ state.nickname=(document.getElementById("prepNick").value||"").trim(); } prepAdvance(); }));
+  }
+  // スキップは通話テスト中（2〜4枚目）だけ表示。最初と最後は隠す
+  document.getElementById("prepSkip").style.visibility = (prepI>0 && prepI<PREP_SLIDES.length-1) ? "visible" : "hidden";
+}
+function prepAdvance(){ if(prepI>=PREP_SLIDES.length-1){ startRehearsal(); } else { prepI++; renderPrep(); } }
+function startRehearsal(){
+  state.rehearsal=true;
+  try{ audio(); }catch(e){}   // ユーザー操作のうちにAudioContextを起動
+  // 本番同様、待機列の前に「本人確認中…」を一瞬挟む
+  showScreen("queue");
+  var st=document.getElementById("qStatus"), big=document.getElementById("qBig"), sub=document.getElementById("qSub");
+  document.getElementById("queueAv").innerHTML=renderFace("normal", state.member);
+  st.textContent="本人確認中…"; big.textContent="🪪"; sub.textContent="身分証を確認しています";
+  setTimeout(function(){ startQueue(); }, 1600);
+}
+
+/* ============================================================
+   9. TALK（本番）
+   ============================================================ */
+function startTalk(){
+  const m=state.member, t=state.ticket;
+  Object.assign(state,{ running:true, exchanges:0, userTexts:[], affection:50, fillerCount:0, crammed:0, maxGap:0, busy:false, aiThinking:false, mood:70, repeats:0, contradictions:0, inappropriate:0, stance:0, boundary:0, jokedRomance:false, dodgedPrivate:false, silenceFills:0, silentTotal:0, incoherent:0, claimedFirst:false, claimedRegular:false, longStreak:0, oneSidedCount:0, combo:0, maxCombo:0, hype:0, favHits:0, recording:false, minMood:70, almostShown:false, loyaltyHits:0, jealousyHits:0, jealousyStrong:false, jealousy:null, loyalty:false, lastTick:performance.now(), typingUntil:0, lastActivityAt:performance.now() });
+  state.event = detectEvent(m);
+  HISTORY.length=0;
+  // 前回の続き（覚えている）設定：トグルONかつ記憶があれば読み込む
+  var pn=parseName(state.nickname); state.callName=pn.name; state.purpose=pn.purpose;   // 「名前／目的」を分解
+  var mem = state.useMemory ? getMem(m.id, state.callName) : null;
+  if(mem) touchMem(m.id, state.callName);
+  state.memory = mem ? mem.lines : null;
+  state.useMemory = !!state.memory;
+  // AI利用のレート制限：このセッションでAIを使えるか（オーナーは無制限／超過は台本モードへ自動切替）
+  state.aiAllowed = aiCanUse();
+  if(state.aiAllowed && !isOwner()) aiConsume();
+  state.durationMs = Math.round(t.sec*1000*(state.diff?state.diff.secMul:1));
+  state.endAt = performance.now() + state.durationMs;
+  state.lastSendAt = performance.now();
+
+  document.getElementById("callWho").textContent = m.name+"（"+t.label+"・"+(state.bu||1)+"部・練習）";
+  const stg=document.querySelector(".stage"); if(stg) stg.style.setProperty("--mc", m.color);
+  setBgTint(m.color);
+  setFace("happy");
+  document.getElementById("talkNick").textContent = state.callName ? "📛 "+state.callName : "";
+  document.getElementById("chat").innerHTML="";
+  document.getElementById("talkInput").value="";
+  document.getElementById("timerbar").classList.remove("warn");
+
+  // 鉄板フレーズ chips
+  const cc=document.getElementById("chips"); cc.innerHTML="";
+  CHIPS.forEach(c=>{
+    const b=document.createElement("button"); b.className="chip"; b.textContent=c.t;
+    b.onclick=()=>{ if(!state.running) return; submitText(c.t); };
+    cc.appendChild(b);
+  });
+  // 締めの「また○部来るね」（部に応じて変化）
+  (function(){ var txt="また"+(state.bu||1)+"部来るね！"; var b=document.createElement("button"); b.className="chip"; b.textContent=txt; b.onclick=function(){ if(!state.running) return; submitText(txt); }; cc.appendChild(b); })();
+
+  updateMoodMeter();
+  updateHype();
+  const eb=document.getElementById("evBanner");
+  if(eb){ if(state.event && EVENT[state.event]){ eb.textContent=EVENT[state.event].label; eb.style.display="block"; } else { eb.style.display="none"; } }
+  document.getElementById("screen-talk").classList.toggle("rehearsal", !!state.rehearsal);
+  showScreen("talk");
+  sysMsg("通話がつながりました"+(state.rehearsal?"":"（"+t.sec+"秒）"));
+  sysMsg(state.rehearsal?"💡 本番リハーサル：時間・コンボは表示されません。最後まで集中して話そう！":"💡 持ち時間内に話しかけよう（下の鉄板フレーズのタップでもOK）");
+  if(state.memory) sysMsg("🧠 "+m.name+"は前回の会話を覚えているみたい…");
+  if(state.purpose) sysMsg("📝 今日は「"+state.purpose+"」をしに来た！");
+  if(!state.aiAllowed) sysMsg("💬 本日のAI会話（"+AI_DAILY_LIMIT+"回）を使い切ったので、今回は台本モードで進みます。");
+  // アイドルの第一声（イベント日＞前回の続き＞通常）
+  const openLine = (state.event && EVENT[state.event]) ? EVENT[state.event].open
+                  : state.memory ? ((state.callName?state.callName+"、":"")+"おかえり！また会いに来てくれたんだね、うれしい〜！")
+                  : pick(m.open);
+  idolSay(openLine, "happy", 0, 0, 700);
+
+  clearInterval(state.idleTimer);
+  state.idleTimer = setInterval(checkIdle, 1000); // 無言の検知
+  startFaceAnim();
+  document.getElementById("sendBtn").disabled=true;
+  document.getElementById("talkInput").focus();
+  // カメラをオンに設定していれば、開始時に使用許可を確認して自動起動
+  if(SETTINGS.cam && !cam.on){ setTimeout(function(){ if(state.running) toggleCamera(); }, 500); }
+  tickTimer();
+}
+function tickTimer(){
+  const now=performance.now();
+  const typing = (state.typingUntil||0) > now;
+  // フェアタイマー：AI/相手の思考・返答中(busy)と、タイピング中は止める。喋っている間は進む（本番のミーグリ時間）
+  // フェアタイマー：AIの“返信思考”中(aiThinking)とタイピング中だけ止める。通信ラグ演出・喋りは時間に含む（本番のミーグリ準拠）
+  if(state.aiThinking || typing){ state.endAt += (now - (state.lastTick||now)); }
+  state.lastTick=now;
+  const left = state.endAt - now;
+  const ratio = Math.max(0, left/state.durationMs);
+  document.getElementById("timerfill").style.width = (ratio*100)+"%";
+  document.getElementById("timeLeft").textContent = Math.max(0,left/1000).toFixed(1)+"s";
+  document.getElementById("timerbar").classList.toggle("warn", ratio<0.34);
+  document.getElementById("timeLeft").classList.toggle("urgent", left<5000 && left>0);
+  var almost=document.getElementById("almostDone"); if(almost) almost.classList.toggle("show", left<6500 && left>0);
+  if(left<=0){ endTalk(); return; }
+  state.raf = requestAnimationFrame(tickTimer);
+}
+function sysMsg(text){
+  const c=document.getElementById("chat");
+  const d=document.createElement("div"); d.className="msg sys"; d.textContent=text;
+  c.appendChild(d); c.scrollTop=c.scrollHeight;
+}
+function meMsg(text){
+  const c=document.getElementById("chat");
+  const d=document.createElement("div"); d.className="msg me"; d.textContent=text;
+  c.appendChild(d); c.scrollTop=c.scrollHeight;
+}
+function updateMoodMeter(){
+  const f=document.getElementById("moodfill"); if(!f) return;
+  const m=state.mood; f.style.width=m+"%";
+  f.style.background = m>=60? "#7CFC9A" : (m>=35? "#ffd166" : "#e7595b");
+  const mf=document.getElementById("moodFace"); if(mf) mf.textContent = m>=70?"😊":(m>=45?"🙂":(m>=30?"😐":"😟"));
+}
+function updateHype(){
+  const f=document.getElementById("hypefill"); if(f) f.style.width=state.hype+"%";
+  const c=document.getElementById("comboLabel"); if(c) c.textContent = state.combo>=2 ? ("コンボ x"+state.combo) : "";
+}
+function hypeBurst(){
+  sysMsg("🎉 盛り上がってきた！");
+  state.affection=clamp(state.affection+6);
+  const stage=document.querySelector(".stage"); if(!stage) return;
+  for(let i=0;i<7;i++){
+    const h=document.createElement("div"); h.className="heart"; h.textContent=["💕","💖","✨","🩷","💞"][i%5];
+    h.style.left=(12+Math.random()*76)+"%"; h.style.animationDelay=(Math.random()*0.4)+"s";
+    stage.appendChild(h); setTimeout(()=>h.remove(), 1700);
+  }
+}
+function spawnConfetti(){
+  const colors=["#ff5e8e","#ffd166","#7bdcb5","#9b8cff","#ff93b6","#ffb347"];
+  for(let i=0;i<64;i++){
+    const c=document.createElement("div"); c.className="confetti";
+    c.style.left=Math.random()*100+"vw";
+    c.style.background=colors[i%colors.length];
+    c.style.animationDuration=(1.8+Math.random()*1.7)+"s";
+    c.style.animationDelay=(Math.random()*0.5)+"s";
+    if(i%3===0) c.style.borderRadius="50%";
+    document.body.appendChild(c);
+    setTimeout(function(){ c.remove(); }, 4200);
+  }
+}
+// スコアのカウントアップ
+function countUp(el, to, ms){
+  if(!el) return; var start=performance.now();
+  (function step(now){ var p=Math.min(1,(now-start)/ms); el.textContent=Math.round(to*(1-Math.pow(1-p,3))); if(p<1) requestAnimationFrame(step); })(performance.now());
+}
+// 会話中：好感度の増減を飛ばす／弾む／赤フラッシュ
+function floatFx(aff){
+  var stage=document.querySelector(".stage"); if(!stage) return;
+  var f=document.createElement("div"); f.className="floatfx "+(aff>0?"pos":"neg");
+  f.textContent=(aff>0?"＋":"−")+Math.abs(aff)+(aff>0?"♥":"");
+  f.style.left=(45+Math.random()*10)+"%";
+  stage.appendChild(f); setTimeout(function(){ f.remove(); }, 1100);
+  if(aff>=8){ for(var i=0;i<3;i++){ var h=document.createElement("div"); h.className="heart"; h.textContent=["💕","💖","✨"][i]; h.style.left=(38+Math.random()*24)+"%"; h.style.animationDelay=(Math.random()*0.3)+"s"; stage.appendChild(h); setTimeout((function(x){return function(){x.remove();};})(h),1700); } }
+}
+function flashStage(){ var s=document.querySelector(".stage"); if(!s) return; var o=document.createElement("div"); o.className="stageflash"; s.appendChild(o); setTimeout(function(){ o.remove(); }, 550); }
+function bumpAvatar(){ var a=document.getElementById("talkAv"); if(!a) return; a.classList.remove("bump"); void a.offsetWidth; a.classList.add("bump"); setTimeout(function(){ a.classList.remove("bump"); }, 470); }
+// 沈黙（無言）対応：一定時間ユーザーが話さないとアイドルから話しかける（段階的にエスカレート）
+function vsilence(m, tier){
+  const pool = (m && m.v && m.v.silence) || DEFAULT_V.silence;
+  return pool[Math.min(tier, pool.length-1)].replace(/\{nick\}/g, state.nickname||"きみ");
+}
+function checkIdle(){
+  if(!state.running){ clearInterval(state.idleTimer); return; }
+  if(state.busy) return;
+  if(state.recording){ state.lastActivityAt=performance.now(); return; }            // 録音中は黙らない
+  var inp=document.getElementById("talkInput");
+  if(inp && inp.value.trim()){ state.lastActivityAt=performance.now(); return; }     // 入力中は急かさない・話題を変えない
+  const idle = performance.now() - state.lastActivityAt;
+  if(idle > (state.diff?state.diff.idle:4500)){
+    const tier = Math.min(state.silenceFills, 2); // 0:励ます 1:話題を振る 2:心配
+    state.silenceFills++;
+    state.silentTotal += idle;
+    state.lastActivityAt = performance.now();
+    const emo = tier>=2 ? "sad" : (tier===1 ? "normal" : "happy");
+    idolSay(vsilence(state.member, tier), emo, 0, (tier>=2?-3:0), 500);
+  }
+}
+// ---- 顔アニメ：まばたき & 口パク（リップシンク）----
+const faceState = { emotion:"normal", blink:false, mouth:false };
+function paintFace(){
+  const el=document.getElementById("talkAv"); if(!el) return;
+  el.innerHTML=renderFace(faceState.emotion, state.member, {blink:faceState.blink, mouth:faceState.mouth});
+}
+function setFace(emotion){ faceState.emotion=emotion; paintFace(); }
+let blinkTimer=0, mouthTimer=0;
+function scheduleBlink(){
+  blinkTimer=setTimeout(function tick(){
+    if(!state.running) return;
+    faceState.blink=true; paintFace();
+    setTimeout(()=>{ faceState.blink=false; paintFace(); }, 120);
+    blinkTimer=setTimeout(tick, 2600+Math.random()*3200);
+  }, 1800+Math.random()*2600);
+}
+function flapMouth(ms){
+  clearInterval(mouthTimer);
+  const end=performance.now()+(ms||1200);
+  mouthTimer=setInterval(()=>{
+    if(!state.running || performance.now()>end){ clearInterval(mouthTimer); faceState.mouth=false; paintFace(); return; }
+    faceState.mouth=!faceState.mouth; paintFace();
+  }, 140);
+}
+function startFaceAnim(){ clearTimeout(blinkTimer); scheduleBlink(); }
+function stopFaceAnim(){ clearTimeout(blinkTimer); clearInterval(mouthTimer); faceState.blink=false; faceState.mouth=false; }
+// 返答の表示＋好感度/機嫌/コンボ反映（台本もAIも共通でここに集約）
+function finishIdolReply(text, emotion, aff, mood){
+  const c=document.getElementById("chat");
+  document.getElementById("lagLabel").classList.remove("show");
+  if(!state.running) return; // 時間切れ後は喋らない
+  if(aff) state.affection=clamp(state.affection+aff);
+  if(mood) state.mood=clamp(state.mood+mood);
+  updateMoodMeter();
+  state.minMood=Math.min(state.minMood==null?70:state.minMood, state.mood);
+  if(aff){ floatFx(aff); if(aff>=8) bumpAvatar(); if(aff<0) flashStage(); }
+  setFace(emotion||"normal");
+  const d=document.createElement("div"); d.className="msg idol"; d.textContent=text;
+  c.appendChild(d); c.scrollTop=c.scrollHeight;
+  tts.speak(text, emotion);
+  flapMouth(Math.min(900+(text?text.length:0)*70, 2600));
+  if((aff||0)>=3){ state.combo++; state.maxCombo=Math.max(state.maxCombo,state.combo); state.hype=Math.min(100,state.hype+22); }
+  else { state.combo=0; if((aff||0)<0) state.hype=Math.max(0,state.hype-28); }
+  updateHype(); if(state.hype>=100){ state.hype=55; hypeBurst(); }
+  state.busy=false; state.lastActivityAt=performance.now();
+}
+function showTyping(){
+  state.busy=true;
+  document.getElementById("lagLabel").classList.add("show");
+  setFace("think");
+  const c=document.getElementById("chat");
+  const t=document.createElement("div"); t.className="typing"; t.innerHTML="<span></span><span></span><span></span>";
+  c.appendChild(t); c.scrollTop=c.scrollHeight; return t;
+}
+// 第一声・沈黙うめ（台本・固定ラグ）
+function idolSay(text, emotion, aff, mood, lag){
+  const lagMs=(lag!=null?lag:Math.round((900+Math.random()*1600)*(state.diff?state.diff.lagMul:1)));
+  const t=showTyping();
+  setTimeout(function(){ t.remove(); finishIdolReply(text,emotion,aff,mood); }, lagMs);
+}
+// ユーザー発言への返答：Gemini優先、失敗/未接続/暴言は台本にフォールバック
+// 関係性のフォールバック反応（AIが使えない時用。浮気＝やきもち／一途＝大喜び）
+function jealousReply(jeal, m){
+  var n=jeal.name;
+  if(jeal.intensity==="strong"){
+    return { text: pick(["え…"+n+"に会ってきたの？うーん、ちょっとショックかも…。", n+"の方がいいの…？わたし、妬けちゃうな…。", "他の子の話されると、さすがに寂しいよ…？"]), emotion:"sad", aff:-6, mood:-13 };
+  }
+  return { text: pick(["むむっ、いま"+n+"の名前出した？妬けちゃうな〜！", n+"も気になるんだ？ふふ、妬いちゃうぞ♡", "あれ〜、わたしだけじゃないの？"]), emotion:"annoyed", aff:-1, mood:-5 };
+}
+function loyaltyReply(m){
+  return { text: pick(["えっ…そんなこと言ってくれるの？うれしすぎる…！", "わたしだけって…もう、大好き！ずっと一緒だよ♡", "そんな風に想ってくれて、ほんとに幸せ…ありがとう！"]), emotion:"happy", aff:9, mood:8 };
+}
+async function respond(text, a){
+  const m=state.member;
+  const t=showTyping();
+  let r=generateReply(text, m, a);
+  if(state.jealousy) r=jealousReply(state.jealousy, m);       // 関係性のフォールバック（AIが成功すれば上書き）
+  else if(state.loyalty) r=loyaltyReply(m);
+  const abuse=(a.category==="insult"||a.category==="physical");
+  const t0=performance.now();
+  if(!abuse && state.aiAllowed){ state.aiThinking=true; let ai=null; try{ ai=await aiReply(text, m); }catch(e){ ai=null; } state.aiThinking=false; if(ai) r=ai; }   // AI思考の間だけタイマー停止（通信ラグは含む）
+  const el=performance.now()-t0;
+  if(el<800) await sleep(800-el+Math.random()*500);
+  t.remove();
+  finishIdolReply(r.text, r.emotion, r.aff, r.mood);
+}
+function submitText(text){
+  text=(text||"").trim(); if(!text) return;
+  if(!state.running || state.busy) return;
+  if(state.recording) stopMic(false);   // 送信時はマイクを止める（多重認識を防ぐ）
+  const now=performance.now();
+  state.maxGap=Math.max(state.maxGap, now-state.lastSendAt); state.lastSendAt=now; state.lastActivityAt=now;
+  const a=analyze(text);
+  state.exchanges++;
+  if(/(えーと|えっと|あのー|あの、|うーんと|んーと|えー、|そのー|……)/.test(text)) state.fillerCount++;
+  if(text.length>=26 || (text.match(/[、。！!？?]/g)||[]).length>=3) state.crammed++;
+  if(a.longMsg) state.longStreak++; else state.longStreak=0;
+  if(a.category==="oneSided") state.oneSidedCount++;
+  if(a.repeat) state.repeats++;
+  if(a.incoherent) state.incoherent++;
+  if(a.category==="insult"||a.category==="physical") state.inappropriate++;
+  else if(a.category==="jokeReal"||a.category==="pushy"||a.category==="invasive") state.boundary++;
+  if(a.contradiction) state.contradictions++;
+  if(a.favTopic) state.favHits++;
+  if(a.claimsFirst) state.claimedFirst=true;
+  if(a.claimsRegular) state.claimedRegular=true;
+  if(a.pos) state.stance=1; else if(a.neg) state.stance=-1;
+  // 関係性：浮気バレ（他メン言及）／一途アップ（現メンへの深い好意）を検知（効果は返答のaff/moodで反映）
+  state.jealousy = detectJealousy(text);
+  state.loyalty = !state.jealousy && detectLoyalty(text);
+  if(state.loyalty) state.loyaltyHits=(state.loyaltyHits||0)+1;
+  if(state.jealousy){ state.jealousyHits=(state.jealousyHits||0)+1; if(state.jealousy.intensity==="strong") state.jealousyStrong=true; }
+  state.userTexts.push(text);
+  meMsg(text);
+  document.getElementById("talkInput").value="";
+  document.getElementById("sendBtn").disabled=true;
+  respond(text, a);
+}
+function endTalk(){
+  if(!state.running) return;
+  state.running=false;
+  cancelAnimationFrame(state.raf);
+  clearInterval(state.idleTimer);
+  stopMic();
+  tts.stop();
+  var almost=document.getElementById("almostDone"); if(almost) almost.classList.remove("show");
+  // 巻き：入力欄に打ちかけ or 一度も話していない
+  const pending=document.getElementById("talkInput").value.trim();
+  state.cutoff = (!!pending) || state.exchanges===0;
+  // 本物のミーグリの「時間です→推しが笑顔のまま止まって終了」を再現
+  stopFaceAnim(); faceState.blink=false; faceState.mouth=false; setFace("happy");
+  sysMsg("⏰ 時間になりました");
+  if(state.exchanges>0){
+    var fare = state.cutoff ? "あっ、時間だ…！続きはまた今度ね、絶対だよ！"
+             : ((state.callName?state.callName+"、":"")+"今日は来てくれてありがとう…！また会えるの楽しみにしてるね！");
+    var c=document.getElementById("chat"); var d=document.createElement("div"); d.className="msg idol"; d.textContent=fare;
+    c.appendChild(d); c.scrollTop=c.scrollHeight;
+    if(!tts.muted){ try{ tts.speak(fare,"happy"); }catch(e){} }
+  }
+  // 笑顔のまま少し“止めて”からホワイトアウト→結果
+  setTimeout(function(){
+    stopCamera();
+    const flash=document.createElement("div");
+    flash.style.cssText="position:absolute;inset:0;background:#fff;z-index:50;opacity:0;transition:opacity .55s;";
+    document.getElementById("app").appendChild(flash);
+    requestAnimationFrame(function(){ flash.style.opacity="1"; });
+    sndEnd();
+    setTimeout(function(){ flash.remove(); showResult(); }, 950);
+  }, state.exchanges>0 ? 1900 : 700);
+}
+
+/* ============================================================
+   10. RESULT（採点）
+   ============================================================ */
+function rarityLabel(r){ return r==="secret"?"★シークレット":(r==="special"?"☆特殊":"・通常"); }
+function dexCount(){ return ENDINGS.filter(e=>DEX[e.id]).length; }
+// どのエンディングかを決める（上から優先）
+function decideEnding(total, rank){
+  const s=state;
+  const clean = (s.inappropriate+s.boundary+s.repeats+s.contradictions+s.incoherent+s.oneSidedCount)===0 && !s.cutoff && s.silenceFills===0;
+  if(s.event==="birthday") return "birthday";
+  if(s.event==="xmas") return "xmas";
+  if(total>=94 && clean && s.affection>=95) return "perfect";
+  if(s.mood>=88 && s.affection>=82 && !s.cutoff && rank!=="D" && s.inappropriate===0) return "godtier";
+  if(s.inappropriate>0) return "creep";
+  if(s.incoherent>=2) return "nazo";
+  if(s.oneSidedCount>=2) return "oneway";
+  if(s.mood<35) return "salt";
+  if(s.exchanges===0) return "blank";
+  if(s.cutoff && s.crammed>=2) return "fastmaki";
+  if(s.cutoff) return "maki";
+  if(s.jealousyStrong && s.mood<62) return "caught";
+  if((s.minMood!=null && s.minMood<42) && s.mood>=62 && s.inappropriate===0) return "recover";
+  if(s.loyaltyHits>=2 && s.mood>=60) return "loyal";
+  if(s.maxCombo>=5) return "hype";
+  if(s.favHits>=2) return "soulfan";
+  if(s.jokedRomance && s.boundary>=1 && s.mood>=55) return "gachiSafe";
+  if(s.jokedRomance && s.mood>=60) return "boyfriend";
+  if(s.incoherent===1 && s.mood>=60 && s.inappropriate===0 && s.boundary===0) return "natural";
+  if(s.useMemory && s.mood>=55 && (rank==="S"||rank==="A"||rank==="B")) return "okaeri";
+  if(rank==="S"||rank==="A") return "great";
+  if(rank==="B" && clean) return "manners";
+  return "good";
+}
+function showResult(){
+  const t=state.ticket;
+  // ===== 採点（ざっくりめ・少し甘め）=====
+  const fillerPen=Math.min(state.fillerCount*5,18);
+  const crammPen = state.crammed>0?8:0;
+  const cutoffPen = state.cutoff?9:0;
+  const silencePen = state.exchanges===0?45:(state.exchanges<t.exp?12:0);
+  const inapPen = state.inappropriate*20;
+  const boundaryPen = state.boundary*10;
+  const contraPen = state.contradictions*9;
+  const repeatPen = Math.min(state.repeats*5,15);
+  const incoherentPen = Math.min(state.incoherent*5,14);
+  const silenceFillPen = Math.min(state.silenceFills*5,14);
+  const oneSidedPen = Math.min(state.oneSidedCount*6,14);
+  const moodPen = state.mood<45?12:(state.mood<60?5:0);
+  const bonus = (state.exchanges>=t.exp && state.mood>=66 && state.silenceFills===0)?4:0;
+  let total = Math.round(state.affection - 2 - fillerPen - crammPen - cutoffPen - silencePen - inapPen - boundaryPen - contraPen - repeatPen - incoherentPen - silenceFillPen - oneSidedPen - moodPen + bonus);
+  total=Math.max(0,Math.min(100,total));
+  let rank = total>=90?"S":total>=76?"A":total>=62?"B":total>=45?"C":"D";
+
+  const rk=document.getElementById("rank"); rk.textContent=rank; rk.className="rank "+rank;
+  document.getElementById("totalScore").textContent="0";
+  // 自己ベスト（メンバー別・ローカル保存）
+  const save = SETTINGS.saveRecords!==false;   // 「記録を残す」設定（OFF＝練習モード・保存しない）
+  const mid=state.member.id, prevBest=BEST[mid], isNewBest=!prevBest||total>prevBest.score;
+  if(isNewBest && save){ BEST[mid]={score:total, rank:rank}; saveBest(BEST); }
+  const bl=document.getElementById("bestLine");
+  if(bl) bl.innerHTML = !save ? '<div class="bestline">📝 このセッションは記録していません（練習モード）</div>'
+    : (isNewBest ? '<span class="newbest">🎉 自己ベスト更新！</span>' : '<div class="bestline">自己ベスト：'+(prevBest?prevBest.rank+'・'+prevBest.score+'点':'—')+'</div>');
+  // エンディング判定＋図鑑記録（保存ONのときだけ図鑑に追加）
+  const eid=decideEnding(total, rank), ed=ENDING_MAP[eid]; state.lastEnding=eid;
+  const wasNew = save && !DEX[eid];
+  if(save){
+    DEX[eid]=(DEX[eid]||0)+1; saveDex(DEX);
+    var cn = (state.callName!=null)?state.callName:parseName(state.nickname).name;
+    var prevTier=oshidoTier(getRel(mid, cn).oshido);
+    var oshiGain = Math.round(state.affection/14) + (rank==="S"?4:rank==="A"?2:rank==="B"?1:0) + Math.min(4,(state.loyaltyHits||0)*2) - (state.jealousyStrong?4:0) - (state.inappropriate>0?5:0);
+    relAddSession(mid, cn, oshiGain);
+    var nt=oshidoTier(getRel(mid, cn).oshido), ol=document.getElementById("oshiLine");
+    if(ol) ol.innerHTML='<div class="oshiline">💞 '+state.member.name+'の推し度　'+'❤️'.repeat(nt.hearts)+' <b>Lv.'+nt.lv+'</b>・'+nt.title+(nt.lv>prevTier.lv?' <span class="newtag">Lv.UP!</span>':'')+'</div>';
+  } else { var olx=document.getElementById("oshiLine"); if(olx) olx.innerHTML=''; }
+  const ec=document.getElementById("endingCard");
+  if(ec) ec.innerHTML='<div class="endico">'+ed.icon+'</div><div class="endname">'+ed.name+(wasNew?' <span class="newtag">NEW!</span>':'')+'</div><div class="enddesc">'+ed.desc+'</div><div class="endmeta">'+rarityLabel(ed.rarity)+' ・ 図鑑 '+dexCount()+'/'+ENDINGS.length+'</div>';
+
+  let fb = {
+    S:"今日はほんとに楽しかった…！会話も自然で、ちゃんと気持ち伝わったよ。また絶対会いに来てね！♡",
+    A:"すごく良かった！緊張しながらもちゃんと話せてたね。次はもっとおしゃべりしよ？",
+    B:"来てくれてうれしかったよ！あと少し落ち着いて話せたら、もっと盛り上がれそう！",
+    C:"短い時間だったね…！次は伝えたいこと1つに絞ってみよ？待ってるからね。",
+    D:"あれ、緊張しちゃったかな？大丈夫、また練習しよ！次はきっと話せるよ。",
+  }[rank];
+  if(state.inappropriate>0) fb="ちょっとびっくりする場面もあったかな…。優しい言葉だと、もっと仲良くなれるよ？";
+  else if(state.boundary>0) fb="グイグイ来てくれて照れたけど…一線は守ってくれると、もっと安心して話せるな♡";
+  else if(state.exchanges===0) fb="緊張しちゃったね…！大丈夫、何度でも練習できるよ。次は一言だけでも話してみよ？";
+  else if(state.silenceFills>=2) fb="言葉に詰まっちゃったかな？焦らなくて平気。短い一言でもわたしはうれしいよ♡";
+  else if(state.oneSidedCount>0) fb="いっぱいお話してくれてうれしい！次はわたしの話も聞いてくれると、もっと楽しいな♡";
+  else if(state.mood<40) fb="うーん…今日はちょっと困っちゃう場面もあったかも。でも来てくれてありがとう、また話そ？";
+  document.getElementById("idolFb").textContent="💬 "+state.member.name+"："+fb;
+
+  const items=[];
+  items.push(evalItem(state.exchanges>=t.exp && state.silenceFills===0, state.exchanges>0,
+    "会話の成立", state.exchanges+"往復"+(state.silenceFills?("・沈黙"+state.silenceFills+"回"):"")+"（目安"+t.exp+"往復）",
+    state.silenceFills? "無言が続くとアイドルが気をつかう。短くてもいいから一言返そう。" : "1トピックを深掘りすると満足度が上がる。話題の詰め込みは禁物。"));
+  items.push(evalItem(state.fillerCount===0, state.fillerCount<=1,
+    "噛み・つまり", state.fillerCount+"回（えーと/あの 等）",
+    "最初の一言を“即答できる依頼形”にすると噛みにくい（例：あだ名つけて！）。"));
+  items.push(evalItem(state.affection>=70, state.affection>=55,
+    "好感度", Math.round(state.affection)+" / 100",
+    "容姿やお祝いをひと言添えると一気に上がる。"));
+  items.push(evalItem(!state.cutoff, !state.cutoff,
+    "時間配分（巻き対策）", state.cutoff?"時間切れ（巻き）あり":"うまく収まった",
+    "本番はラグで実質さらに短い。長文より短い一言を畳みかける。"));
+  items.push(evalItem(state.crammed===0, state.crammed<=1,
+    "詰め込みすぎ", state.crammed>0?"長い発言あり":"簡潔でOK",
+    "1発言は短く。「聞こえる？」の確認に秒を使わないのもコツ。"));
+  const manaNg = state.inappropriate>0;
+  const manaWarn = state.boundary>0 || state.contradictions>0 || state.repeats>0 || state.incoherent>0 || state.oneSidedCount>0;
+  const manaVal = ((state.inappropriate?("不適切"+state.inappropriate+" "):"")+(state.boundary?("踏み込み"+state.boundary+" "):"")+(state.contradictions?("矛盾"+state.contradictions+" "):"")+(state.oneSidedCount?("一方的"+state.oneSidedCount+" "):"")+(state.incoherent?("意味不明"+state.incoherent+" "):"")+(state.repeats?("繰り返し"+state.repeats):"")).trim() || "問題なし";
+  items.push(evalItem(!manaNg && !manaWarn, !manaNg && state.boundary<=1,
+    "空気・マナー（機嫌 "+Math.round(state.mood)+"）", manaVal,
+    "暴言や物理接触は厳禁。会話はキャッチボール。長文の一方通行や辻褄の合わない発言は控えめに。"));
+  document.getElementById("items").innerHTML=items.join("");
+
+  showScreen("result");
+  state.rememberOn=false; syncRememberToggle();
+  var av=document.getElementById("aiVerdict"); if(av) av.innerHTML="";
+  if(HISTORY.length>=2){
+    // A案：AI会話があれば、会話全体をAIが講評・採点（失敗時はルール採点にフォールバック）
+    document.getElementById("totalScore").textContent="…";
+    if(av) av.innerHTML='<div class="ailoading">🤖 AIが会話を講評中…</div>';
+    aiEvaluate().then(function(ev){
+      if(!ev){ if(av) av.innerHTML=""; countUp(document.getElementById("totalScore"), total, 800); if(rank==="S"||rank==="A") spawnConfetti(); return; }
+      var ar=(["S","A","B","C","D"].indexOf(ev.rank)>=0)?ev.rank:rank;
+      var asc=clampNum(ev.score,0,100);
+      var rk2=document.getElementById("rank"); rk2.textContent=ar; rk2.className="rank "+ar;
+      countUp(document.getElementById("totalScore"), asc, 900);
+      if(ev.comment) document.getElementById("idolFb").textContent="💬 "+state.member.name+"："+ev.comment;
+      if(av) av.innerHTML='<div class="aiv"><b>🤖 AI講評</b><p>👍 '+esc(ev.good)+'</p><p>📈 '+esc(ev.advice)+'</p></div>';
+      if(save){ var wasNew=!prevBest||asc>prevBest.score; BEST[mid]=wasNew?{score:asc,rank:ar}:prevBest; saveBest(BEST);
+        var bl2=document.getElementById("bestLine"); if(bl2) bl2.innerHTML=wasNew?'<span class="newbest">🎉 自己ベスト更新！</span>':'<div class="bestline">自己ベスト：'+(prevBest?prevBest.rank+'・'+prevBest.score+'点':'—')+'</div>'; }
+      if(ar==="S"||ar==="A") spawnConfetti();
+    });
+  } else {
+    countUp(document.getElementById("totalScore"), total, 900);
+    if(rank==="S"||rank==="A") spawnConfetti();
+  }
+}
+function evalItem(good, ok, title, value, tip){
+  const mk = good?'<span class="mk ok">◎</span>':(ok?'<span class="mk warn">○</span>':'<span class="mk bad">△</span>');
+  return '<div class="item">'+mk+'<div class="tx"><b>'+title+'</b>（'+value+'）<p>'+tip+'</p></div></div>';
+}
+
+// ===== 図鑑・設定・シェア =====
+function renderDex(){
+  var n=dexCount(), total=ENDINGS.length, pct=total?Math.round(n/total*100):0;
+  document.getElementById("dexProgress").innerHTML =
+    'コンプリート <b style="color:var(--brand-ink)">'+n+'</b> / '+total+' <span style="color:var(--muted)">('+pct+'%)</span>'
+    + '<div class="dexbar"><div style="width:'+pct+'%"></div></div>'
+    + (n===0 ? '<div class="dexempty">まだカードはありません。ミーグリをクリアすると、終わり方ごとにカードが集まります。下の「？？？」はヒント付きの未解放カードです。</div>' : '');
+  const g=document.getElementById("dexGrid"); g.innerHTML="";
+  ENDINGS.forEach(function(e,i){
+    const got=!!DEX[e.id];
+    const d=document.createElement("div"); d.className="dexcard "+e.rarity+(got?"":" locked");
+    d.style.animationDelay=(i*0.035)+"s";
+    d.innerHTML = got
+      ? '<div class="dexico">'+e.icon+'</div><div class="dexname">'+e.name+'</div><div class="dexdesc">'+e.desc+'</div><div class="dexmeta">'+rarityLabel(e.rarity)+(DEX[e.id]>1?(' ・'+DEX[e.id]+'回'):'')+'</div>'
+      : '<div class="dexico">❔</div><div class="dexname">？？？</div><div class="dexdesc">'+e.hint+'</div><div class="dexmeta">'+rarityLabel(e.rarity)+'</div>';
+    g.appendChild(d);
+  });
+}
+function openSettings(){
+  const rc=document.getElementById("setRate"); rc.innerHTML="";
+  [["おそい",0.85],["ふつう",1.08],["はやい",1.35]].forEach(function(p){
+    const d=document.createElement("div"); d.className="diff"+(Math.abs(SETTINGS.rate-p[1])<0.01?" sel":""); d.textContent=p[0];
+    d.onclick=function(){ SETTINGS.rate=p[1]; saveSettings(); tts.speak("このくらいの速さだよ"); openSettings(); }; rc.appendChild(d);
+  });
+  const sc=document.getElementById("setSfx"); sc.innerHTML="";
+  [["ON",true],["OFF",false]].forEach(function(p){
+    const d=document.createElement("div"); d.className="diff"+(SETTINGS.sfx===p[1]?" sel":""); d.textContent=p[0];
+    d.onclick=function(){ SETTINGS.sfx=p[1]; saveSettings(); openSettings(); }; sc.appendChild(d);
+  });
+  var ar=document.getElementById("setAiRemain");
+  if(ar){ ar.textContent = isOwner() ? "オーナーモード：無制限 ✨" : ("あと "+aiRemaining()+" / "+AI_DAILY_LIMIT+" 回（毎日リセット・超過で台本モード）"); }
+  var oa=document.getElementById("ownerArea");
+  if(oa){
+    if(isOwner()){
+      oa.innerHTML='<div class="owneron">👑 オーナーモード ON（無制限）</div><button class="btn ghost" id="ownerOff" style="margin-top:6px;">解除する</button>';
+      var off=document.getElementById("ownerOff"); if(off) off.onclick=function(){ try{ localStorage.removeItem("meegri_owner"); }catch(e){} toast("オーナーモードOFF"); openSettings(); };
+    } else {
+      oa.innerHTML='<div class="field-label" style="margin-top:0;">オーナー専用（無制限・本人だけ）</div><div class="ownerrow"><input type="password" id="ownerCode" placeholder="オーナーコード" autocomplete="off"><button class="btn" id="ownerIn">確認</button></div><p class="camnote">※本人だけが解除可（API保護）。</p>';
+      var oi=document.getElementById("ownerIn"); if(oi) oi.onclick=function(){
+        var v=(document.getElementById("ownerCode").value||"").trim(); if(!v){ toast("コードを入力してね"); return; }
+        fetch("/api/reply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:"owner",code:v})})
+          .then(function(r){return r.json();})
+          .then(function(j){ if(j&&j.owner){ try{localStorage.setItem("meegri_owner","1");}catch(e){} toast("オーナーモードON"); } else { toast("コードが違います"); } openSettings(); })
+          .catch(function(){ toast("確認に失敗しました（接続が必要です）"); });
+      };
+    }
+  }
+  // 記録を残す（練習モード）トグル
+  var sr=document.getElementById("saveRecToggle");
+  if(sr){ var son=SETTINGS.saveRecords!==false; sr.classList.toggle("on",son); sr.setAttribute("aria-checked",son?"true":"false");
+    sr.onclick=function(){ SETTINGS.saveRecords=(SETTINGS.saveRecords===false); saveSettings(); openSettings(); }; }
+  // 覚えている会話の個別削除
+  var mm=document.getElementById("memManage");
+  if(mm){
+    var list=allProfiles();
+    mm.innerHTML='<div class="label">記録のある人物（名前ごと・会話の記憶や推し度を保存）</div>'+(list.length
+      ? list.map(function(x,i){
+          var tier=oshidoTier(x.oshido);
+          var hearts='❤️'.repeat(tier.hearts)+'🤍'.repeat(Math.max(0,5-tier.hearts));
+          var prev = x.hasMem ? esc(memPreview(x.key)) : '<span style="opacity:.7;">会話の記憶はなし（推し度のみ）</span>';
+          return '<div class="memrow2"><div class="mr-head"><span>🧠 '+esc(x.charName)+(x.profName?'「'+esc(x.profName)+'」':'（名前なし）')+(x.when?' <small>'+esc(x.when)+'</small>':'')+'</span>'
+            +'<button class="memdel" data-idx="'+i+'">消す</button></div>'
+            +'<div class="mr-sub">'+hearts+' '+esc(tier.title)+(x.sessions?(' ・ 会った回数 '+x.sessions):'')+'</div>'
+            +'<div class="mr-prev">'+prev+'</div></div>';
+        }).join("")
+      : '<p class="camnote" style="margin:2px 4px;">まだ記録のある人物はいません。</p>');
+    mm.querySelectorAll(".memdel").forEach(function(b){ b.onclick=function(){
+      if(b.getAttribute("data-armed")!=="1"){ b.setAttribute("data-armed","1"); b.textContent="本当に消す？"; b.classList.add("armed"); return; }
+      var x=list[parseInt(b.getAttribute("data-idx"),10)];
+      if(x){ deleteProfile(x.key); toast("「"+x.charName+(x.profName?("「"+x.profName+"」"):"")+"」の記録を消しました"); }
+      if(window.updateMemRow) updateMemRow(); if(window.updateNameReuse) updateNameReuse(); openSettings();
+    }; });
+  }
+  // すべての記録をリセット（インライン確認）
+  var rr=document.getElementById("resetRecords"), rcBox=document.getElementById("resetConfirm");
+  if(rr&&rcBox){
+    rr.onclick=function(){ rcBox.hidden=!rcBox.hidden; };
+    var rcc=document.getElementById("resetCancel"), rcy=document.getElementById("resetYes");
+    if(rcc) rcc.onclick=function(){ rcBox.hidden=true; };
+    if(rcy) rcy.onclick=function(){ try{ DEX={}; saveDex(DEX); BEST={}; saveBest(BEST); forgetAllMem(); resetRel(); }catch(e){} rcBox.hidden=true; toast("記録をすべて消しました"); if(window.updateMemRow) updateMemRow(); if(window.updateNameReuse) updateNameReuse(); openSettings(); };
+  }
+  document.getElementById("setModal").style.display="flex";
+}
+function closeSettings(){ document.getElementById("setModal").style.display="none"; }
+// ===== チュートリアル（あそびかた）=====
+const TUT=[
+  {ico:"🎤", t:"ミーグリって？", b:"推しのアイドルと1対1で話せる、短い特別な時間。このアプリで本番そっくりに練習できるよ！"},
+  {ico:"⏱️", t:"話しかけよう", b:"持ち時間内に、下の入力欄で話しかけよう。『鉄板フレーズ』をタップでもOK。時間は短いから、手短にね！"},
+  {ico:"💖", t:"機嫌に気をつけて", b:"褒めたり、推しの好きな話題を当てると好感度＆機嫌がUP♪ 同じ話の繰り返し・失礼・一方的・無言は機嫌が下がるよ。"},
+  {ico:"📔", t:"エンディングを集めよう", b:"終わり方しだいで結果（エンディング）が変化。いろんな終わり方を図鑑にコンプリートしよう！"},
+];
+let tutI=0;
+function renderTut(){
+  const s=TUT[tutI];
+  document.getElementById("tutIco").textContent=s.ico;
+  document.getElementById("tutTitle").textContent=s.t;
+  document.getElementById("tutBody").textContent=s.b;
+  document.getElementById("tutPrev").style.visibility=(tutI===0)?"hidden":"visible";
+  document.getElementById("tutNext").textContent=(tutI===TUT.length-1)?"はじめる！":"つぎへ";
+  document.getElementById("tutDots").innerHTML=TUT.map(function(_,i){return '<span class="tutdot'+(i===tutI?' on':'')+'"></span>';}).join("");
+}
+function openTut(){ tutI=0; renderTut(); document.getElementById("tutModal").style.display="flex"; }
+function closeTut(){ document.getElementById("tutModal").style.display="none"; try{ localStorage.setItem("meegri_onboarded","1"); }catch(e){} }
+
+// ===== WebGL 背景シェーダー（OpenGL/GLSL のショーケース）=====
+let bgTint=[1.0,0.83,0.90];
+function hexToRgb(h){ h=(h||"").replace("#",""); if(h.length===3) h=h.split("").map(function(c){return c+c;}).join(""); var n=parseInt(h,16)||0; return [((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255]; }
+function setBgTint(hex){ var c=hexToRgb(hex); bgTint=[Math.min(1,c[0]*0.55+0.5),Math.min(1,c[1]*0.55+0.5),Math.min(1,c[2]*0.55+0.5)]; }
+function initBgFx(){
+  var cv=document.getElementById("bgfx"); if(!cv) return;
+  var gl=null; try{ gl=cv.getContext("webgl")||cv.getContext("experimental-webgl"); }catch(e){}
+  if(!gl){ cv.style.display="none"; return; }   // 非対応はCSS背景にフォールバック
+  var vs="attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}";
+  var fs=`precision mediump float;
+uniform vec2 uRes; uniform float uTime; uniform vec3 uTint;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+ float a=hash(i),b=hash(i+vec2(1.0,0.0)),c=hash(i+vec2(0.0,1.0)),d=hash(i+vec2(1.0,1.0));
+ return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
+float fbm(vec2 p){float v=0.0,a=0.5;for(int i=0;i<5;i++){v+=a*noise(p);p*=2.02;a*=0.5;}return v;}
+void main(){
+ vec2 uv=gl_FragCoord.xy/uRes.xy;
+ vec2 p=uv*vec2(uRes.x/uRes.y,1.0);
+ float t=uTime*0.05;
+ float n=fbm(p*2.5+vec2(t,t*0.7));
+ float n2=fbm(p*1.5-vec2(t*0.6,t));
+ vec3 c1=vec3(1.0,0.86,0.93);
+ vec3 c2=vec3(0.92,0.88,1.0);
+ vec3 c3=vec3(1.0,0.93,0.86);
+ vec3 col=mix(c1,c2,smoothstep(0.2,0.8,n));
+ col=mix(col,c3,smoothstep(0.4,0.9,n2)*0.5);
+ col=mix(col,uTint,0.14*smoothstep(0.3,0.95,n));
+ float blob=0.0;
+ for(int i=0;i<3;i++){float fi=float(i);
+  vec2 bp=vec2(0.5+0.34*sin(t*1.3+fi*2.1),0.5+0.34*cos(t*1.1+fi*1.7));
+  blob+=0.022/length(p-bp*vec2(uRes.x/uRes.y,1.0));}
+ col+=blob*uTint*0.16;
+ col*=0.95+0.05*n;
+ gl_FragColor=vec4(col,1.0);
+}`;
+  function sh(type,src){ var o=gl.createShader(type); gl.shaderSource(o,src); gl.compileShader(o); return o; }
+  var prog=gl.createProgram();
+  gl.attachShader(prog,sh(gl.VERTEX_SHADER,vs)); gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fs)); gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ cv.style.display="none"; return; }
+  gl.useProgram(prog);
+  var buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  var loc=gl.getAttribLocation(prog,"p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  var uRes=gl.getUniformLocation(prog,"uRes"), uTime=gl.getUniformLocation(prog,"uTime"), uTint=gl.getUniformLocation(prog,"uTint");
+  function resize(){ cv.width=Math.max(2,Math.floor(window.innerWidth*0.5)); cv.height=Math.max(2,Math.floor(window.innerHeight*0.5)); gl.viewport(0,0,cv.width,cv.height); }
+  resize(); window.addEventListener("resize",resize);
+  var start=performance.now(), raf=0;
+  function loop(now){ gl.uniform2f(uRes,cv.width,cv.height); gl.uniform1f(uTime,(now-start)/1000); gl.uniform3f(uTint,bgTint[0],bgTint[1],bgTint[2]); gl.drawArrays(gl.TRIANGLE_STRIP,0,4); raf=requestAnimationFrame(loop); }
+  loop(performance.now());
+  document.addEventListener("visibilitychange",function(){ if(document.hidden){ cancelAnimationFrame(raf); raf=0; } else if(!raf){ loop(performance.now()); } });
+}
+
+// ===== カメラ（自分の顔）＋ WebGLふんわりビューティー（端末内完結・アップロードなし）=====
+const cam={ on:false, stream:null, video:null, gl:null, prog:null, tex:null, u:{}, raf:0 };
+function setupCamGL(){
+  var cv=document.getElementById("camfx"); if(!cv) return false;
+  var gl=null; try{ gl=cv.getContext("webgl")||cv.getContext("experimental-webgl"); }catch(e){}
+  if(!gl) return false;
+  var vs="attribute vec2 p;varying vec2 vUv;void main(){vUv=p*0.5+0.5;gl_Position=vec4(p,0.0,1.0);}";
+  var fs=`precision mediump float; uniform sampler2D uCam; uniform vec2 uTexel; uniform float uFlip; varying vec2 vUv;
+float luma(vec3 c){ return dot(c, vec3(0.299,0.587,0.114)); }
+void main(){
+ vec2 uv=vUv; uv.x=mix(uv.x,1.0-uv.x,uFlip);
+ vec3 c=texture2D(uCam,uv).rgb;
+ // 重み付きブラー（広め）で肌の下地をなめらかに
+ vec3 b=c*0.20;
+ b+=texture2D(uCam,uv+uTexel*vec2( 1.6,0.0)).rgb*0.12;
+ b+=texture2D(uCam,uv+uTexel*vec2(-1.6,0.0)).rgb*0.12;
+ b+=texture2D(uCam,uv+uTexel*vec2(0.0, 1.6)).rgb*0.12;
+ b+=texture2D(uCam,uv+uTexel*vec2(0.0,-1.6)).rgb*0.12;
+ b+=texture2D(uCam,uv+uTexel*vec2( 2.6, 2.6)).rgb*0.08;
+ b+=texture2D(uCam,uv+uTexel*vec2(-2.6, 2.6)).rgb*0.08;
+ b+=texture2D(uCam,uv+uTexel*vec2( 2.6,-2.6)).rgb*0.08;
+ b+=texture2D(uCam,uv+uTexel*vec2(-2.6,-2.6)).rgb*0.08;
+ // エッジ保持：明暗差が小さい所だけ強くなめらか（目や輪郭はくっきり残す）
+ float diff=abs(luma(c)-luma(b));
+ float sm=(1.0-smoothstep(0.04,0.17,diff))*0.72;
+ vec3 col=mix(c,b,sm);
+ // ほんのり明るく＋ゆるいSカーブで立体感
+ col=col*1.04+0.022;
+ col=mix(col, col*col*(3.0-2.0*col), 0.12);
+ // 暖色の血色グレーディング
+ col+=vec3(0.03,0.006,0.0);
+ col=mix(col, col*vec3(1.03,1.0,0.985), 0.5);
+ // ソフトブルーム（明部をスクリーン合成でふわっと発光）
+ vec3 glow=max(b-0.62,0.0);
+ col=1.0-(1.0-col)*(1.0-glow*0.5);
+ // ソフトビネット
+ float d=distance(vUv,vec2(0.5));
+ col*=smoothstep(0.96,0.26,d)*0.26+0.76;
+ gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);
+}`;
+  function sh(t,s){ var o=gl.createShader(t); gl.shaderSource(o,s); gl.compileShader(o); return o; }
+  var prog=gl.createProgram(); gl.attachShader(prog,sh(gl.VERTEX_SHADER,vs)); gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fs)); gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) return false;
+  gl.useProgram(prog);
+  var buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  var loc=gl.getAttribLocation(prog,"p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  var tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  cam.gl=gl; cam.prog=prog; cam.tex=tex;
+  cam.u.uTexel=gl.getUniformLocation(prog,"uTexel"); cam.u.uFlip=gl.getUniformLocation(prog,"uFlip");
+  return true;
+}
+function camLoop(){
+  if(!cam.on){ return; }
+  var gl=cam.gl, v=cam.video, cv=document.getElementById("camfx");
+  if(gl && cv && v && v.readyState>=2 && v.videoWidth){
+    if(cv.width!==cv.clientWidth || cv.height!==cv.clientHeight){ cv.width=cv.clientWidth; cv.height=cv.clientHeight; }
+    gl.viewport(0,0,cv.width,cv.height);
+    gl.bindTexture(gl.TEXTURE_2D,cam.tex);
+    try{ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,v); }catch(e){}
+    gl.uniform2f(cam.u.uTexel, 1.0/v.videoWidth, 1.0/v.videoHeight);
+    gl.uniform1f(cam.u.uFlip, 1.0);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  }
+  cam.raf=requestAnimationFrame(camLoop);
+}
+function toggleCamera(){
+  if(cam.on){ stopCamera(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ toast("この環境ではカメラが使えません（https/localhostで）"); return; }
+  navigator.mediaDevices.getUserMedia({video:{facingMode:"user", width:{ideal:720}, height:{ideal:960}}, audio:false}).then(function(stream){
+    cam.stream=stream;
+    var v=document.createElement("video"); v.autoplay=true; v.playsInline=true; v.muted=true; v.srcObject=stream; cam.video=v;
+    v.play().catch(function(){});
+    document.getElementById("camPip").style.display="block";
+    if(!cam.gl){ if(!setupCamGL()){ toast("カメラ加工の初期化に失敗しました"); } }
+    cam.on=true; var b=document.getElementById("camBtn"); if(b) b.classList.add("on");
+    cancelAnimationFrame(cam.raf); camLoop();
+    toast("カメラON（端末内のみ・録画/送信なし）");
+  }).catch(function(){ toast("カメラを使えませんでした（許可が必要です）"); });
+}
+function stopCamera(){
+  cam.on=false; cancelAnimationFrame(cam.raf); cam.raf=0;
+  if(cam.stream){ try{ cam.stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){} cam.stream=null; }
+  cam.video=null;
+  var pip=document.getElementById("camPip"); if(pip) pip.style.display="none";
+  var b=document.getElementById("camBtn"); if(b) b.classList.remove("on");
+}
+
+// ===== マイク（音声入力・Web Speech API。話すと文字化→自動送信。録音中はタイマー停止）=====
+let recog=null;
+// 音声認識の定番ミスを補正（「えぐい」を発音的に「AV/エーブイ」と誤認識→そのまま送られるのを防ぐ）。
+// 必要に応じて [正規表現, 置換後] を足していけば他の聞き間違いも直せる。
+const SPEECH_FIX=[
+  [/エーブイ|エイブイ|エービー|エイビー/g, "えぐい"],
+  [/(^|[^0-9A-Za-zＡ-Ｚａ-ｚ])(?:AV|Av|aV|av|ＡＶ|Ａｖ|ａＶ|ａｖ)(?=[^0-9A-Za-zＡ-Ｚａ-ｚ]|$)/g, "$1えぐい"]
+];
+function fixSpeech(s){
+  s=String(s||"");
+  for(var i=0;i<SPEECH_FIX.length;i++) s=s.replace(SPEECH_FIX[i][0], SPEECH_FIX[i][1]);
+  return s;
+}
+function updateMicUI(){ var b=document.getElementById("micBtn"); if(b) b.classList.toggle("on", !!state.recording); }
+function toggleMic(){
+  if(state.recording){ stopMic(true); return; }   // 録音中にもう一度タップ＝「言い切ったので送信」
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ toast("この環境では音声入力が使えません（Chrome＋localhost/https推奨）"); return; }
+  if(!state.running || state.busy) return;
+  try{
+    recog=new SR(); recog.lang="ja-JP"; recog.interimResults=true; recog.continuous=true; recog.maxAlternatives=1;
+    var input=document.getElementById("talkInput");
+    state.micFinal="";
+    recog.onresult=function(e){
+      var interim="";
+      for(var i=e.resultIndex;i<e.results.length;i++){
+        var tr=fixSpeech(e.results[i][0].transcript);
+        if(e.results[i].isFinal) state.micFinal+=tr; else interim+=tr;
+      }
+      input.value = state.micFinal + interim;        // ★自動送信しない。喋った内容を入力欄にためる
+      document.getElementById("sendBtn").disabled=!input.value.trim();
+      state.lastActivityAt=performance.now();
+    };
+    recog.onerror=function(ev){ if(ev && (ev.error==="no-speech"||ev.error==="aborted")) return; stopMic(false); };
+    recog.onend=function(){ if(state.recording){ try{ recog.start(); }catch(e){} } };  // ★自分でオフにするまで聞き続ける（途中の間で切れない）
+    state.recording=true; updateMicUI();
+    recog.start();
+    toast("🎙️ 話してね。話し終わったら🎙️をもう一度タップで送信");
+  }catch(e){ state.recording=false; updateMicUI(); toast("音声入力を開始できませんでした"); }
+}
+function stopMic(submit){
+  var wasRec=state.recording;
+  state.recording=false; updateMicUI();
+  if(recog){ try{ recog.onend=null; recog.stop(); }catch(e){} recog=null; }
+  if(submit && wasRec){
+    var input=document.getElementById("talkInput");
+    var fin=(input.value||"").trim();
+    if(fin) setTimeout(function(){ submitText(fin); }, 150);
+  }
+}
+function toast(msg){
+  const t=document.createElement("div"); t.className="toast"; t.textContent=msg; document.body.appendChild(t);
+  setTimeout(function(){ t.remove(); }, 2200);
+}
+function shareResult(){
+  const ed=ENDING_MAP[state.lastEnding]||{}, m=state.member;
+  const txt="【meegri ミーグリ練習】"+(m?m.name:"")+"とのミーグリ → "+(ed.icon||"")+(ed.name||"")+"！ ランク"+document.getElementById("rank").textContent+"／"+document.getElementById("totalScore").textContent+"点 #ミーグリ練習 #meegri";
+  if(navigator.share){ navigator.share({text:txt}).catch(function(){}); }
+  else if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(function(){ toast("結果をコピーしました！"); }).catch(function(){ toast("コピーできませんでした"); }); }
+  else { toast("シェア非対応の環境です"); }
+}
+
+/* ============================================================
+   11. 配線
+   ============================================================ */
+function init(){
+  tts.init();
+  initBgFx();
+  buildHome();
+  document.getElementById("goQueue").onclick=()=>{ state.rehearsal=false; startQueue(); };
+  document.getElementById("goRehearsal").onclick=openPrep;
+  document.getElementById("prepBack").onclick=()=>{ if(prepI>0){ prepI--; renderPrep(); } else { buildHome(); showScreen("home"); } };
+  document.getElementById("prepSkip").onclick=()=>{ prepI=PREP_SLIDES.length-1; renderPrep(); };
+  document.getElementById("memToggle").onclick=()=>{ state.useMemory=!state.useMemory; updateMemRow(); };
+  // 折りたたみ（③詳細設定・オプション）
+  [["diffMore","diffSliders"],["optMore","optBody"]].forEach(function(p){
+    var b=document.getElementById(p[0]), body=document.getElementById(p[1]);
+    if(b&&body) b.onclick=function(){
+      if(body.hasAttribute("hidden")){ body.removeAttribute("hidden"); b.setAttribute("aria-expanded","true"); }
+      else { body.setAttribute("hidden",""); b.setAttribute("aria-expanded","false"); }
+    };
+  });
+  document.getElementById("rememberToggle").onclick=()=>{
+    if(!state.member) return;
+    state.rememberOn=!state.rememberOn;
+    var cnm=(state.callName!=null)?state.callName:parseName(state.nickname).name;
+    if(state.rememberOn){ rememberConversation(state.member.id, cnm); toast("この会話を覚えました（次回ホームで「前回の続き」を選べます）"); }
+    else { forgetConversation(state.member.id, cnm); }
+    syncRememberToggle();
+  };
+  document.getElementById("sendBtn").onclick=()=>submitText(document.getElementById("talkInput").value);
+  document.getElementById("talkInput").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); submitText(e.target.value);} });
+  document.getElementById("talkInput").addEventListener("input",e=>{ document.getElementById("sendBtn").disabled=!e.target.value.trim(); state.typingUntil=performance.now()+1300; });
+  document.getElementById("muteBtn").onclick=()=>{
+    tts.muted=!tts.muted; if(tts.muted) tts.stop();
+    var mb=document.getElementById("muteBtn");
+    mb.querySelector(".ci").textContent = tts.muted?"🔇":"🔊";
+    mb.querySelector(".cl").textContent = tts.muted?"ミュート":"声";
+    mb.classList.toggle("on", tts.muted);
+  };
+  document.getElementById("camBtn").onclick=toggleCamera;
+  document.getElementById("micBtn").onclick=toggleMic;
+  document.getElementById("retry").onclick=()=>startQueue();
+  document.getElementById("toHome").onclick=()=>{ buildHome(); showScreen("home"); };
+  document.getElementById("homeDex").onclick=()=>{ renderDex(); showScreen("dex"); };
+  document.getElementById("homeSettings").onclick=openSettings;
+  document.getElementById("dexBack").onclick=()=>{ buildHome(); showScreen("home"); };
+  document.getElementById("dexBackTop").onclick=()=>{ buildHome(); showScreen("home"); };
+  document.getElementById("toDex").onclick=()=>{ renderDex(); showScreen("dex"); };
+  document.getElementById("shareBtn").onclick=shareResult;
+  document.getElementById("setClose").onclick=closeSettings;
+  document.getElementById("setX").onclick=closeSettings;
+  document.getElementById("homeHelp").onclick=openTut;
+  document.getElementById("tutPrev").onclick=function(){ if(tutI>0){ tutI--; renderTut(); } };
+  document.getElementById("tutNext").onclick=function(){ if(tutI<TUT.length-1){ tutI++; renderTut(); } else { closeTut(); } };
+  try{ if(!localStorage.getItem("meegri_onboarded")) setTimeout(openTut, 1900); }catch(e){}
+  // タップ波紋（リップル）
+  document.addEventListener("pointerdown", function(e){
+    var el=e.target.closest && e.target.closest(".btn,.ticket,.diff,.chip,.sendbtn,.mute,.ctrlbtn,.camtoggle"); if(!el) return;
+    var r=el.getBoundingClientRect(), size=Math.max(r.width,r.height);
+    var s=document.createElement("span"); s.className="ripple";
+    s.style.width=s.style.height=size+"px";
+    s.style.left=(e.clientX-r.left-size/2)+"px"; s.style.top=(e.clientY-r.top-size/2)+"px";
+    el.appendChild(s); setTimeout(function(){ s.remove(); }, 600);
+  });
+}
+window.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
