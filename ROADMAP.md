@@ -2,7 +2,7 @@
 
 > ミーグリ（アイドルのオンライン・ミート＆グリート）練習シミュレーター
 > 本ファイルは「一旦完成」時点の残タスク・方針メモ。`app/index.html`（単一HTML・ビルド不要）が本体。
-> 最終更新: 2026-06-22
+> 最終更新: 2026-07-01
 
 ---
 
@@ -73,7 +73,7 @@
 - [x] `vercel.json` 追加（`framework:null`・`buildCommand:null`・`installCommand:null`・`outputDirectory:"app"`・`cleanUrls:true`）。旧package.jsonでReactビルドが走らないようにし、`app/`静的配信＋`api/`関数で動かす。
 - [x] **オーナーコードもサーバー側へ**：クライアント定数を廃し `mode:"owner"` で `process.env.OWNER_CODE` と照合（公開JSにオーナーコードは出ない）。
 - [x] **公開前チェック**：本体8ファイルのみコミット、`.env`・APIキーがリポジトリに無いことを `git ls-tree origin/main` で再確認。
-- [x] **Privateリポジトリへpush完了** → https://github.com/ryoo-ma638/meegri `[PRIVATE]`（コミット名義はこのリポジトリ限定でGitHub noreply）。
+- [x] **GitHubで公開（Public）** → https://github.com/ryoo-ma638/meegri 。本体8ファイルのみを公開し、`.env`・APIキー・オーナーコードはリポジトリに含めない（サーバー側の環境変数のみ）。
 - [x] **Vercelで公開＆動作確認済み（2026-06-22）** → **https://meegri.vercel.app** 。`Import .env`で3変数を登録しDeploy。本番テストで ①表示OK ②オーナー照合（正→ON／誤→拒否）③AI会話 実応答 ④AI採点 実スコア を確認。
 - [ ] レート制限（C参照）。
 - [ ] 実機（iPhone/Android）でカメラ・マイク・TTS・getUserMedia（要https）確認。
